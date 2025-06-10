@@ -86,6 +86,34 @@ class ContentControllerTest {
     }
     
     @Test
+    void listContent_shouldNormalizePaths() throws Exception {
+        // Given
+        String[] testPaths = {
+            "",                  // empty path
+            "/",                 // root path
+            "dir1",              // relative path
+            "/dir1/",            // path with trailing slash
+            "dir1/subdir",        // nested path
+            "/dir1/subdir/"      // nested path with trailing slash
+        };
+        
+        for (String path : testPaths) {
+            // Reset mocks for each test case
+            reset(contentRepository);
+            
+            // When/Then
+            mockMvc.perform(get("/api/content")
+                    .param("path", path))
+                   .andExpect(status().isOk());
+            
+            // Verify the repository was called with a normalized path (starts and ends with /)
+            verify(contentRepository).findChildren(argThat(p -> 
+                p.startsWith("/") && (p.equals("/") || !p.endsWith("/"))
+            ));
+        }
+    }
+    
+    @Test
     void saveContent_shouldSaveFile() throws Exception {
         // Given
         String content = "Test content";
