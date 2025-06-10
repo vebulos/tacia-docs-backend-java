@@ -28,7 +28,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.*;
+import org.springframework.test.web.servlet.MvcResult;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(ContentController.class)
@@ -83,6 +86,69 @@ class ContentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name", is("test.txt")))
                 .andExpect(jsonPath("$.content", is("Test content")));
+    }
+    
+    @Test
+    void getContent_shouldReturnDirectoryContentRecursively() throws Exception {
+        // Given
+        Instant now = Instant.now();
+        
+        // Mock directory structure:
+        // /parent/
+        //   - file1.txt
+        //   - child/
+        //     - file2.txt
+        
+        ContentItem parentDir = ContentItem.directory("parent", "/parent", now);
+        ContentItem file1 = ContentItem.file("file1.txt", "/parent/file1.txt", 10, now);
+        ContentItem childDir = ContentItem.directory("child", "/parent/child", now);
+        ContentItem file2 = ContentItem.file("file2.txt", "/parent/child/file2.txt", 20, now);
+        
+        // Debug: Print the paths we're setting up mocks for
+        System.out.println("Setting up mocks for paths:");
+        System.out.println("- /parent or /parent/");
+        System.out.println("- /parent/child or /parent/child/");
+        
+        // Set up mocks with null-safe path matching
+        when(contentRepository.findByPath(argThat(path -> {
+            System.out.println("findByPath called with: " + path);
+            return path != null && (path.equals("/parent") || path.equals("/parent/"));
+        }))).thenReturn(Optional.of(parentDir));
+            
+        when(contentRepository.findChildren(argThat(path -> {
+            System.out.println("findChildren(parent) called with: " + path);
+            return path != null && (path.equals("/parent") || path.equals("/parent/"));
+        }))).thenReturn(List.of(file1, childDir));
+            
+        when(contentRepository.findChildren(argThat(path -> {
+            System.out.println("findChildren(child) called with: " + path);
+            return path != null && (path.equals("/parent/child") || path.equals("/parent/child/"));
+        }))).thenReturn(List.of(file2));
+        
+        // When/Then
+        String response = mockMvc.perform(get("/api/content/item")
+                .param("path", "/parent")
+                .param("recursive", "true")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("parent"))
+                .andExpect(jsonPath("$.type").value("directory"))
+                .andExpect(jsonPath("$.children").isArray())
+                .andExpect(jsonPath("$.children.length()").value(2))
+                .andExpect(jsonPath("$.children[?(@.name == 'file1.txt')].type").value("file"))
+                .andExpect(jsonPath("$.children[?(@.name == 'child')].type").value("directory"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+                
+        // Verify the nested structure
+        assertTrue(response.contains("file1.txt"), "Response should contain file1.txt");
+        assertTrue(response.contains("\"name\":\"child\""), "Response should contain child directory");
+        
+        // The issue is that the child directory's children are empty in the response
+        // This suggests the mock for "/parent/child" isn't being used with the expected path
+        assertTrue(response.contains("file2.txt"), "Response should contain file2.txt in child directory");
     }
     
     @Test

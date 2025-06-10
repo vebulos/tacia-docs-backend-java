@@ -52,11 +52,16 @@ public class ContentController {
                     if ("file".equals(item.type())) {
                         String content = contentRepository.readContent(normalizedPath);
                         return ResponseEntity.ok(ContentItemDto.withContent(item, content));
-                    } else if (recursive) {
-                        List<ContentItemDto> children = getChildrenRecursively(normalizedPath);
-                        return ResponseEntity.ok(ContentItemDto.withChildren(item, children));
+                    } else {
+                        // For directories, always include children when recursive is true
+                        if (recursive) {
+                            List<ContentItemDto> children = getChildrenRecursively(normalizedPath);
+                            return ResponseEntity.ok(ContentItemDto.withChildren(item, children));
+                        } else {
+                            // For non-recursive, just return the directory info
+                            return ResponseEntity.ok(ContentItemDto.fromDomain(item));
+                        }
                     }
-                    return ResponseEntity.ok(ContentItemDto.fromDomain(item));
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to read content: " + normalizedPath, e);
                 }
@@ -98,11 +103,17 @@ public class ContentController {
     }
 
     private List<ContentItemDto> getChildrenRecursively(String path) {
-        return contentRepository.findChildren(path).stream()
+        logger.debug("Getting children for path: {}", path);
+        List<ContentItem> children = contentRepository.findChildren(path);
+        logger.debug("Found {} children for path: {}", children.size(), path);
+        
+        return children.stream()
             .map(item -> {
+                logger.debug("Processing item: {} (type: {})", item.path(), item.type());
                 if ("directory".equals(item.type())) {
-                    List<ContentItemDto> children = getChildrenRecursively(item.path());
-                    return ContentItemDto.withChildren(item, children);
+                    List<ContentItemDto> nestedChildren = getChildrenRecursively(item.path());
+                    logger.debug("Found {} nested children in {}", nestedChildren.size(), item.path());
+                    return ContentItemDto.withChildren(item, nestedChildren);
                 }
                 return ContentItemDto.fromDomain(item);
             })
