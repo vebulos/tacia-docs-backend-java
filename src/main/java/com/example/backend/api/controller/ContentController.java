@@ -4,6 +4,8 @@ import com.example.backend.api.dto.ContentItemDto;
 import com.example.backend.api.exception.ContentNotFoundException;
 import com.example.backend.domain.model.ContentItem;
 import com.example.backend.domain.repository.ContentRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,20 +18,28 @@ import java.util.Map;
 @RequestMapping("/api/content")
 public class ContentController {
 
+    private static final Logger logger = LoggerFactory.getLogger(ContentController.class);  
+
     private final ContentRepository contentRepository;
 
     public ContentController(ContentRepository contentRepository) {
         this.contentRepository = contentRepository;
+        logger.info("ContentController initialized");
+        System.out.println("ContentController initialized");
     }
 
     @GetMapping("")
     public ResponseEntity<List<ContentItemDto>> listRoot() {
+        logger.info("Listing root content");
+        System.out.println("Listing root content");
         return listContent("/");
     }
 
     @GetMapping("/**")
     public ResponseEntity<List<ContentItemDto>> listContent(@RequestParam(required = false) String path) {
         String normalizedPath = normalizePath(path);
+        logger.info("Listing content at path: {}", normalizedPath);
+
         List<ContentItem> items = contentRepository.findChildren(normalizedPath);
         List<ContentItemDto> dtos = items.stream()
             .map(ContentItemDto::fromDomain)
@@ -49,7 +59,7 @@ public class ContentController {
                     }
                     return ResponseEntity.ok(ContentItemDto.fromDomain(item));
                 } catch (IOException e) {
-                    throw new RuntimeException("Failed to read content: " + normalizedPath, e);
+                                throw new RuntimeException("Failed to read content: " + normalizedPath, e);
                 }
             })
             .orElseThrow(() -> new ContentNotFoundException(normalizedPath));
