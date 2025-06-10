@@ -104,15 +104,22 @@ public class ContentController {
 
     private List<ContentItemDto> getChildrenRecursively(String path) {
         logger.debug("Getting children for path: {}", path);
-        List<ContentItem> children = contentRepository.findChildren(path);
-        logger.debug("Found {} children for path: {}", children.size(), path);
+        // Ensure the path is normalized before querying children
+        String normalizedPath = normalizePath(path);
+        logger.debug("Normalized path for children query: {}", normalizedPath);
+        
+        List<ContentItem> children = contentRepository.findChildren(normalizedPath);
+        logger.debug("Found {} children for path: {}", children.size(), normalizedPath);
         
         return children.stream()
             .map(item -> {
                 logger.debug("Processing item: {} (type: {})", item.path(), item.type());
                 if ("directory".equals(item.type())) {
-                    List<ContentItemDto> nestedChildren = getChildrenRecursively(item.path());
-                    logger.debug("Found {} nested children in {}", nestedChildren.size(), item.path());
+                    // Use the item's path directly since it should already be normalized
+                    String childPath = normalizePath(item.path());
+                    logger.debug("Getting nested children for directory: {}", childPath);
+                    List<ContentItemDto> nestedChildren = getChildrenRecursively(childPath);
+                    logger.debug("Found {} nested children in {}", nestedChildren.size(), childPath);
                     return ContentItemDto.withChildren(item, nestedChildren);
                 }
                 return ContentItemDto.fromDomain(item);
@@ -125,8 +132,15 @@ public class ContentController {
             return "/";
         }
         // Ensure path starts with a single slash and doesn't end with one (except root)
-        String normalized = path.replaceAll("^/|/$", "");
-        return "/" + normalized;
+        String normalized = path.trim();
+        if (!normalized.startsWith("/")) {
+            normalized = "/" + normalized;
+        }
+        // Remove trailing slash unless it's the root
+        if (normalized.length() > 1 && normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     private String getFileName(String path) {
