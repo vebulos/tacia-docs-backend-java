@@ -16,133 +16,129 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-@Repository
 public class FileSystemContentRepository implements ContentRepository {
-    private static final Logger log = LoggerFactory.getLogger(FileSystemContentRepository.class);
-    private static final Set<String> HIDDEN_DIRS = Set.of(".git", ".idea", "node_modules");
-    private static final String METADATA_FILE = ".metadata.json";
 
     private final Path contentRoot;
 
     public FileSystemContentRepository(Path contentRoot) {
         this.contentRoot = contentRoot.toAbsolutePath().normalize();
-        ensureContentRootExists();
+        createDirectoriesIfNotExists(this.contentRoot);
     }
 
     @Override
     public Optional<ContentItem> findByPath(String path) {
-        Path filePath = resolvePath(path);
-        if (!Files.exists(filePath)) {
-            return Optional.empty();
+        try {
+            Path fullPath = resolvePath(path);
+            if (!Files.exists(fullPath)) {
+                return Optional.empty();
+            }
+
+            BasicFileAttributes attrs = Files.readAttributes(fullPath, BasicFileAttributes.class);
+            String name = getFileName(fullPath);
+            String type = Files.isDirectory(fullPath) ? "directory" : "file";
+            long size = attrs.size();
+            Instant lastModified = attrs.lastModifiedTime().toInstant();
+
+            // Use the normalized path that matches how we store it
+            String normalizedPath = "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/");
+            if (type.equals("directory") && !normalizedPath.endsWith("/")) {
+                normalizedPath += "/";
+            }
+
+            return Optional.of(new ContentItem(name, type, normalizedPath, size, lastModified));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read file attributes: " + path, e);
         }
-        return Optional.ofNullable(createContentItem(filePath));
     }
 
     @Override
     public List<ContentItem> findChildren(String path) {
-        try {
-            Path dirPath = resolvePath(path);
-            if (!Files.isDirectory(dirPath)) {
-                return List.of();
-            }
+        List<ContentItem> children = new ArrayList<>();
+        Path dirPath = resolvePath(path);
 
-            try (Stream<Path> paths = Files.list(dirPath)) {
-                return paths
-                    .filter(p -> !p.getFileName().toString().startsWith("."))
-                    .filter(p -> !HIDDEN_DIRS.contains(p.getFileName().toString()))
-                    .filter(p -> !p.getFileName().toString().equals(METADATA_FILE))
-                    .map(this::createContentItem)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-            }
-        } catch (IOException e) {
-            log.error("Error finding children of path: " + path, e);
-            return List.of();
+        if (!Files.isDirectory(dirPath)) {
+            return children;
         }
+
+        // Normalize the parent path
+        String parentPath = path.endsWith("/") ? path : path + "/";
+
+        try (var stream = Files.list(dirPath)) {
+            stream.sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                .forEach(childPath -> {
+                    try {
+                        BasicFileAttributes attrs = Files.readAttributes(childPath, BasicFileAttributes.class);
+                        String name = getFileName(childPath);
+                        String type = Files.isDirectory(childPath) ? "directory" : "file";
+                        String childPathStr = parentPath + name;
+                        
+                        // Ensure directory paths end with a slash
+                        if (type.equals("directory") && !childPathStr.endsWith("/")) {
+                            childPathStr += "/";
+                        }
+                        
+                        long size = attrs.size();
+                        Instant lastModified = attrs.lastModifiedTime().toInstant();
+
+                        children.add(new ContentItem(name, type, childPathStr, size, lastModified));
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to read child: " + childPath, e);
+                    }
+                });
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to list directory: " + path, e);
+        }
+
+        return children;
     }
 
     @Override
     public ContentItem save(ContentItem item, String content) {
         try {
-            Path filePath = resolvePath(item.path());
-            Path parentDir = filePath.getParent();
-
-            if (parentDir != null) {
-                Files.createDirectories(parentDir);
-                // Save metadata in the parent directory
-                saveMetadata(parentDir, item.metadata());
-            }
-
-            // Save the actual content
-            Files.writeString(filePath, content, StandardCharsets.UTF_8);
+            Path fullPath = resolvePath(item.path());
+            Files.createDirectories(fullPath.getParent());
+            Files.writeString(fullPath, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             
-            // Update file metadata
-            BasicFileAttributes attrs = Files.readAttributes(filePath, BasicFileAttributes.class);
-            return ContentItem.file(
+            // Update the item with the actual file attributes
+            BasicFileAttributes attrs = Files.readAttributes(fullPath, BasicFileAttributes.class);
+            return new ContentItem(
                 item.name(),
+                item.type(),
                 item.path(),
-                item.mimeType(),
-                content.getBytes(StandardCharsets.UTF_8).length,
-                attrs.lastModifiedTime().toInstant(),
-                item.metadata()
+                attrs.size(),
+                attrs.lastModifiedTime().toInstant()
             );
         } catch (IOException e) {
             throw new RuntimeException("Failed to save content: " + item.path(), e);
-        }
-    }
-    
-    private void saveMetadata(Path directory, Map<String, Object> metadata) {
-        if (metadata == null || metadata.isEmpty()) {
-            return;
-        }
-        
-        try {
-            // TODO: Implement JSON serialization of metadata
-            // For now, we'll just store a simple property file
-            Path metadataFile = directory.resolve(METADATA_FILE);
-            Properties props = new Properties();
-            metadata.forEach((key, value) -> props.setProperty(key, String.valueOf(value)));
-            
-            try (OutputStream os = Files.newOutputStream(metadataFile)) {
-                props.store(os, "Content metadata");
-            }
-        } catch (IOException e) {
-            log.warn("Failed to save metadata for directory: " + directory, e);
         }
     }
 
     @Override
     public boolean delete(String path) {
         try {
-            Path filePath = resolvePath(path);
-            if (!Files.exists(filePath)) {
+            Path fullPath = resolvePath(path);
+            if (!Files.exists(fullPath)) {
                 return false;
             }
             
-            if (Files.isDirectory(filePath)) {
+            if (Files.isDirectory(fullPath)) {
                 // Delete directory recursively
-                Files.walkFileTree(filePath, new SimpleFileVisitor<>() {
-                    @Override
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        Files.delete(file);
-                        return FileVisitResult.CONTINUE;
-                    }
-
-                    @Override
-                    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                        Files.delete(dir);
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
+                Files.walk(fullPath)
+                    .sorted(Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException e) {
+                            throw new RuntimeException("Failed to delete: " + p, e);
+                        }
+                    });
             } else {
-                Files.delete(filePath);
+                Files.deleteIfExists(fullPath);
             }
             return true;
         } catch (IOException e) {
-            log.error("Error deleting path: " + path, e);
-            return false;
+            throw new RuntimeException("Failed to delete: " + path, e);
         }
     }
 
@@ -155,98 +151,37 @@ public class FileSystemContentRepository implements ContentRepository {
     public Path getAbsolutePath(String path) {
         return resolvePath(path);
     }
-    
+
     @Override
     public String readContent(String path) throws IOException {
-        Path filePath = resolvePath(path);
-        if (!Files.exists(filePath)) {
-            throw new ContentNotFoundException(path);
-        }
-        if (Files.isDirectory(filePath)) {
-            throw new IOException("Cannot read content of a directory: " + path);
-        }
-        return Files.readString(filePath, StandardCharsets.UTF_8);
+        return Files.readString(resolvePath(path));
     }
 
     private Path resolvePath(String path) {
-        Path resolved = contentRoot.resolve(path.startsWith("/") ? path.substring(1) : path);
-        // Security check: prevent directory traversal
-        if (!resolved.normalize().startsWith(contentRoot)) {
+        if (path == null || path.isEmpty() || "/".equals(path)) {
+            return contentRoot;
+        }
+        // Remove leading slash if present
+        String relativePath = path.startsWith("/") ? path.substring(1) : path;
+        Path resolvedPath = contentRoot.resolve(relativePath).normalize().toAbsolutePath();
+        
+        // Security check: ensure the resolved path is within the content root
+        if (!resolvedPath.startsWith(contentRoot)) {
             throw new SecurityException("Access to requested path is not allowed: " + path);
         }
-        return resolved;
+        
+        return resolvedPath;
     }
 
-    private ContentItem createContentItem(Path path) {
+    private void createDirectoriesIfNotExists(Path path) {
         try {
-            if (Files.isHidden(path) || path.getFileName().toString().startsWith(".")) {
-                return null;
-            }
-
-            BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
-            String relativePath = contentRoot.relativize(path).toString().replace("\\", "/");
-            String itemPath = "/" + relativePath;
-
-            if (Files.isDirectory(path)) {
-                if (HIDDEN_DIRS.contains(path.getFileName().toString())) {
-                    return null;
-                }
-                return ContentItem.directory(
-                    path.getFileName().toString(),
-                    itemPath,
-                    attrs.lastModifiedTime().toInstant(),
-                    loadMetadata(path)
-                );
-            } else {
-                if (path.getFileName().toString().equals(METADATA_FILE)) {
-                    return null;
-                }
-                
-                String mimeType = Files.probeContentType(path);
-                return ContentItem.file(
-                    path.getFileName().toString(),
-                    itemPath,
-                    mimeType != null ? mimeType : "application/octet-stream",
-                    attrs.size(),
-                    attrs.lastModifiedTime().toInstant(),
-                    loadMetadata(path.getParent())
-                );
-            }
+            Files.createDirectories(path);
         } catch (IOException e) {
-            log.error("Error creating content item for path: " + path, e);
-            return null;
+            throw new RuntimeException("Failed to create directory: " + path, e);
         }
     }
 
-    private Map<String, Object> loadMetadata(Path directory) {
-        Path metadataFile = directory.resolve(METADATA_FILE);
-        if (!Files.exists(metadataFile)) {
-            return Map.of();
-        }
-        try (InputStream is = Files.newInputStream(metadataFile)) {
-            Properties props = new Properties();
-            props.load(is);
-            
-            Map<String, Object> metadata = new HashMap<>();
-            props.forEach((key, value) -> 
-                metadata.put(key.toString(), value)
-            );
-            
-            return metadata;
-        } catch (Exception e) {
-            log.warn("Failed to load metadata from: " + metadataFile, e);
-            return Map.of();
-        }
-    }
-
-    private void ensureContentRootExists() {
-        try {
-            if (!Files.exists(contentRoot)) {
-                Files.createDirectories(contentRoot);
-                log.info("Created content root directory: {}", contentRoot);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create content root directory: " + contentRoot, e);
-        }
+    private String getFileName(Path path) {
+        return path.getFileName() != null ? path.getFileName().toString() : "";
     }
 }

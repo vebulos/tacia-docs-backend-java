@@ -10,84 +10,86 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/content")
+@RequestMapping("/api")
 public class ContentController {
 
-    private static final Logger logger = LoggerFactory.getLogger(ContentController.class);  
-
+    private static final Logger logger = LoggerFactory.getLogger(ContentController.class);
     private final ContentRepository contentRepository;
 
     public ContentController(ContentRepository contentRepository) {
         this.contentRepository = contentRepository;
         logger.info("ContentController initialized");
-        System.out.println("ContentController initialized");
     }
 
-    @GetMapping("")
-    public ResponseEntity<List<ContentItemDto>> listRoot() {
-        logger.info("Listing root content");
-        System.out.println("Listing root content");
-        return listContent("/");
-    }
-
-    @GetMapping("/**")
-    public ResponseEntity<List<ContentItemDto>> listContent(@RequestParam(required = false) String path) {
+    @GetMapping("/content")
+    public ResponseEntity<List<ContentItemDto>> listContent(
+            @RequestParam(required = false, defaultValue = "/") String path) {
         String normalizedPath = normalizePath(path);
         logger.info("Listing content at path: {}", normalizedPath);
 
         List<ContentItem> items = contentRepository.findChildren(normalizedPath);
         List<ContentItemDto> dtos = items.stream()
             .map(ContentItemDto::fromDomain)
-            .toList();
+            .collect(Collectors.toList());
+        
         return ResponseEntity.ok(dtos);
     }
 
-    @GetMapping("/item/**")
-    public ResponseEntity<ContentItemDto> getContent(@RequestParam(required = false) String path) {
+    @GetMapping("/content/item")
+    public ResponseEntity<ContentItemDto> getContent(
+            @RequestParam String path,
+            @RequestParam(required = false, defaultValue = "false") boolean recursive) {
         String normalizedPath = normalizePath(path);
+        logger.info("Getting content at path: {} (recursive: {})", normalizedPath, recursive);
+
         return contentRepository.findByPath(normalizedPath)
             .map(item -> {
                 try {
                     if ("file".equals(item.type())) {
                         String content = contentRepository.readContent(normalizedPath);
                         return ResponseEntity.ok(ContentItemDto.withContent(item, content));
+                    } else if (recursive) {
+                        List<ContentItemDto> children = getChildrenRecursively(normalizedPath);
+                        return ResponseEntity.ok(ContentItemDto.withChildren(item, children));
                     }
                     return ResponseEntity.ok(ContentItemDto.fromDomain(item));
                 } catch (IOException e) {
-                                throw new RuntimeException("Failed to read content: " + normalizedPath, e);
+                    throw new RuntimeException("Failed to read content: " + normalizedPath, e);
                 }
             })
             .orElseThrow(() -> new ContentNotFoundException(normalizedPath));
     }
 
-    @PostMapping("/**")
+    @PostMapping("/content")
     public ResponseEntity<ContentItemDto> saveContent(
-            @RequestParam(required = false) String path,
+            @RequestParam String path,
             @RequestBody String content) {
         String normalizedPath = normalizePath(path);
-        // This is a simplified version - in a real app, you'd want to parse the content
-        // and handle different content types appropriately
-        ContentItem item = ContentItem.file(
-            getFileName(normalizedPath),
-            normalizedPath,
-            "text/plain",
-            content.getBytes().length,
-            null,
-            Map.of()
+        logger.info("Saving content to: {}", normalizedPath);
+
+        ContentItem item = contentRepository.save(
+            new ContentItem(
+                getFileName(normalizedPath),
+                "file",
+                normalizedPath,
+                content.getBytes().length,
+                java.time.Instant.now()
+            ),
+            content
         );
         
-        ContentItem savedItem = contentRepository.save(item, content);
-        return ResponseEntity.ok(ContentItemDto.fromDomain(savedItem));
+        return ResponseEntity.ok(ContentItemDto.withContent(item, content));
     }
 
-    @DeleteMapping("/**")
-    public ResponseEntity<Void> deleteContent(@RequestParam(required = false) String path) {
+    @DeleteMapping("/content")
+    public ResponseEntity<Void> deleteContent(@RequestParam String path) {
         String normalizedPath = normalizePath(path);
+        logger.info("Deleting content at: {}", normalizedPath);
+
         if (!contentRepository.exists(normalizedPath)) {
             throw new ContentNotFoundException(normalizedPath);
         }
@@ -95,12 +97,24 @@ public class ContentController {
         return ResponseEntity.noContent().build();
     }
 
+    private List<ContentItemDto> getChildrenRecursively(String path) {
+        return contentRepository.findChildren(path).stream()
+            .map(item -> {
+                if ("directory".equals(item.type())) {
+                    List<ContentItemDto> children = getChildrenRecursively(item.path());
+                    return ContentItemDto.withChildren(item, children);
+                }
+                return ContentItemDto.fromDomain(item);
+            })
+            .collect(Collectors.toList());
+    }
+
     private String normalizePath(String path) {
         if (path == null || path.trim().isEmpty() || "/".equals(path.trim())) {
             return "/";
         }
-        // Remove leading/trailing slashes and normalize
-        String normalized = path.replaceAll("^/+|/+$", "");
+        // Ensure path starts with a single slash and doesn't end with one (except root)
+        String normalized = path.replaceAll("^/|/$", "");
         return "/" + normalized;
     }
 

@@ -49,13 +49,12 @@ class FileSystemContentRepositoryTest {
     @Test
     void shouldSaveAndRetrieveFile() {
         // Given
+        Instant now = Instant.now();
         ContentItem item = ContentItem.file(
             "test.txt",
             "/test.txt",
-            "text/plain",
             0,
-            Instant.now(),
-            Map.of("title", "Test File")
+            now
         );
         String content = "Test content";
 
@@ -67,33 +66,29 @@ class FileSystemContentRepositoryTest {
         assertTrue(foundItem.isPresent());
         assertEquals(item.name(), foundItem.get().name());
         assertEquals(item.path(), foundItem.get().path());
-        assertEquals("Test File", foundItem.get().metadata().get("title"));
     }
 
     @Test
     void shouldListDirectoryContents() {
         // Given
+        Instant now = Instant.now();
         ContentItem file1 = ContentItem.file(
             "file1.txt",
             "/dir1/file1.txt",
-            "text/plain",
             0,
-            Instant.now(),
-            Map.of()
+            now
         );
         ContentItem file2 = ContentItem.file(
             "file2.txt",
             "/dir1/file2.txt",
-            "text/plain",
             0,
-            Instant.now(),
-            Map.of()
+            now
         );
 
         // When
         repository.save(file1, "content1");
         repository.save(file2, "content2");
-        List<ContentItem> children = repository.findChildren("/dir1");
+        List<ContentItem> children = repository.findChildren("/dir1/");
 
         // Then
         assertEquals(2, children.size());
@@ -104,13 +99,12 @@ class FileSystemContentRepositoryTest {
     @Test
     void shouldDeleteFile() {
         // Given
+        Instant now = Instant.now();
         ContentItem item = ContentItem.file(
             "toDelete.txt",
             "/toDelete.txt",
-            "text/plain",
             0,
-            Instant.now(),
-            Map.of()
+            now
         );
         repository.save(item, "content");
         assertTrue(repository.exists("/toDelete.txt"));

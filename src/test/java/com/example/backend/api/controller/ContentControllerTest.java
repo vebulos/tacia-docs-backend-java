@@ -51,8 +51,9 @@ class ContentControllerTest {
     @Test
     void listRoot_shouldReturnRootContent() throws Exception {
         // Given
-        ContentItem file1 = ContentItem.file("file1.txt", "/file1.txt", "text/plain", 100, Instant.now(), Map.of("title", "File 1"));
-        ContentItem dir1 = ContentItem.directory("dir1", "/dir1", Instant.now(), Map.of("title", "Directory 1"));
+        Instant now = Instant.now();
+        ContentItem file1 = ContentItem.file("file1.txt", "/file1.txt", 100, now);
+        ContentItem dir1 = ContentItem.directory("dir1", "/dir1", now);
         
         when(contentRepository.findChildren("/")).thenReturn(List.of(file1, dir1));
         
@@ -69,7 +70,8 @@ class ContentControllerTest {
     @Test
     void getContent_shouldReturnFileContent() throws Exception {
         // Given
-        ContentItem file = ContentItem.file("test.txt", "/test.txt", "text/plain", 12, Instant.now(), Map.of("title", "Test File"));
+        Instant now = Instant.now();
+        ContentItem file = ContentItem.file("test.txt", "/test.txt", 12, now);
         when(contentRepository.findByPath("/test.txt")).thenReturn(Optional.of(file));
         when(contentRepository.readContent("/test.txt")).thenReturn("Test content");
         
@@ -88,13 +90,12 @@ class ContentControllerTest {
         // Given
         String content = "Test content";
         String path = "/test.txt";
+        Instant now = Instant.now();
         ContentItem savedItem = ContentItem.file(
             "test.txt", 
             path, 
-            "text/plain", 
             content.length(), 
-            Instant.now(), 
-            Map.of()
+            now
         );
         
         when(contentRepository.save(any(ContentItem.class), eq(content))).thenReturn(savedItem);
