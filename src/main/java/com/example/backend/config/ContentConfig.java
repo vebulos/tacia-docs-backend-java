@@ -5,6 +5,7 @@ import com.example.backend.infrastructure.filesystem.FileSystemContentRepository
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -13,9 +14,13 @@ import java.nio.file.Paths;
 public class ContentConfig {
 
     @Bean
-    public ContentRepository contentRepository(
-            @Value("${app.content.root-directory:./DATA}") String contentRoot) {
-        Path contentPath = Paths.get(contentRoot).toAbsolutePath().normalize();
+    @Primary
+    public ContentRepository contentRepository(Path contentPath) {
         return new FileSystemContentRepository(contentPath);
+    }
+
+    @Bean
+    public Path contentPath(@Value("${app.content.root-directory:./DATA/content}") String contentRoot) {
+        return Paths.get(contentRoot).toAbsolutePath().normalize();
     }
 }
