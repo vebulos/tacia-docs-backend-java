@@ -1,6 +1,6 @@
 spring:
   application:
-    name: mxc-backend
+    name: tacia-backend
   
   # Configuration for the embedded server
   main:
