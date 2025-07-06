@@ -12,8 +12,13 @@ public record RelatedDocumentDto(
     /** The title of the related document */
     String title,
     
-    /** Relevance score (0.0 to 1.0) */
-    double score,
+    /** 
+     * Relevance score indicating how related the document is (matching backend-js implementation)
+     * - 2.0: Document is in the same directory
+     * - 1.0: Document is in a different directory
+     */
+    @com.fasterxml.jackson.annotation.JsonProperty("relevance")
+    double relevance,
     
     /** Last modification time */
     Instant lastModified
@@ -21,7 +26,7 @@ public record RelatedDocumentDto(
     /**
      * Creates a new RelatedDocumentDto with the current time as lastModified
      */
-    public RelatedDocumentDto(String path, String title, double score) {
-        this(path, title, score, Instant.now());
+    public RelatedDocumentDto(String path, String title, double relevance) {
+        this(path, title, relevance, Instant.now());
     }
 }

@@ -63,7 +63,7 @@ public class SimpleRelatedDocumentsService implements RelatedDocumentsService {
                         relevance
                     );
                 })
-                .sorted((a, b) -> Double.compare(b.score(), a.score())) // Sort by relevance (highest first)
+                .sorted((a, b) -> Double.compare(b.relevance(), a.relevance())) // Sort by relevance (highest first)
                 .limit(limit)
                 .collect(Collectors.toList());
             
