@@ -28,7 +28,7 @@ public class SimpleRelatedDocumentsService implements RelatedDocumentsService {
     }
     
     @Override
-    public List<RelatedDocumentDto> findRelatedDocuments(String documentPath, int limit) {
+    public List<RelatedDocumentDto> findRelatedDocuments(String documentPath, int limit, boolean skipCache) {
         try {
             // Normalize the path (similar to the JS implementation)
             String normalizedPath = normalizePath(documentPath);

@@ -4,10 +4,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 /**
  * Security configuration for the application.
@@ -24,12 +25,7 @@ public class SecurityConfig {
 
     // Public endpoints that don't require authentication
     private static final String[] PUBLIC_ENDPOINTS = {
-        "/api/health/**",
-        "/v3/api-docs/**",
-        "/swagger-ui/**",
-        "/swagger-ui.html",
-        "/actuator/health/**",
-        "/actuator/info"
+        "/**"  // Allow all endpoints for now
     };
 
     /**
@@ -42,44 +38,50 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            // Disable CSRF as we're using token-based authentication
+            // Disable CSRF
             .csrf(AbstractHttpConfigurer::disable)
             
-            // Configure CORS
-            .cors(cors -> cors.configure(http))
+            // Configure CORS to be handled by WebConfig
+            .cors(cors -> {})
             
             // Configure session management to be stateless
-            .sessionManagement(session -> 
-                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            .sessionManagement(session -> session
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             
+            // Configure security headers
+            .headers(headers -> {
+                // Disable cache control
+                headers.cacheControl(HeadersConfigurer.CacheControlConfig::disable);
+                // Disable content type options
+                headers.contentTypeOptions(HeadersConfigurer.ContentTypeOptionsConfig::disable);
+                // Disable HSTS
+                headers.httpStrictTransportSecurity(HeadersConfigurer.HstsConfig::disable);
+                // Disable frame options
+                headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable);
+                // Disable XSS protection
+                headers.xssProtection(HeadersConfigurer.XXssConfig::disable);
+                
+                // Set a minimal CSP that allows everything (effectively disabling CSP)
+                headers.contentSecurityPolicy(csp -> 
+                    csp.policyDirectives("default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline';") 
+                );
+                
+                // Set minimal referrer policy
+                headers.referrerPolicy(referrer -> 
+                    referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)
+                );
+            })
+            
             // Configure request authorization
-            .authorizeHttpRequests(auth -> auth
-                // Public endpoints
-                .requestMatchers(
-                    "/api/health/**",
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/actuator/health/**",
-                    "/actuator/info"
-                ).permitAll()
-                // All other requests require authentication
-                .anyRequest().authenticated()
-            )
+            .authorizeHttpRequests(auth -> {
+                // All requests are permitted
+                auth.anyRequest().permitAll();
+            });
             
             // TODO: Uncomment and configure JWT authentication filter when ready
             // .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             
-            // Configure exception handling
-            .exceptionHandling(exception -> 
-                exception
-                    // Handle access denied
-                    .accessDeniedHandler((request, response, accessDeniedException) -> {
-                        response.sendError(403, "Access Denied: " + accessDeniedException.getMessage());
-                    })
-            );
-
         return http.build();
     }
 

@@ -1,9 +1,11 @@
 package com.example.backend.api.controller;
 
 import com.example.backend.api.dto.ContentItemDto;
+import com.example.backend.api.dto.ContentMetadataDto;
 import com.example.backend.api.exception.ContentNotFoundException;
 import com.example.backend.model.ContentItem;
 import com.example.backend.repository.ContentRepository;
+import com.example.backend.service.MarkdownService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -14,8 +16,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
-
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -27,9 +30,11 @@ public class ContentController {
 
     private static final Logger logger = LoggerFactory.getLogger(ContentController.class);
     private final ContentRepository contentRepository;
+    private final MarkdownService markdownService;
 
-    public ContentController(ContentRepository contentRepository) {
+    public ContentController(ContentRepository contentRepository, MarkdownService markdownService) {
         this.contentRepository = contentRepository;
+        this.markdownService = markdownService;
     }
 
     /**
@@ -70,7 +75,7 @@ public class ContentController {
     }
 
     @GetMapping("/content/**")
-    public ResponseEntity<ContentItemDto> getContent(
+    public ResponseEntity<?> getContent(
             @RequestParam(required = false, defaultValue = "false") boolean recursive) {
         
         String path = extractPathFromRequest();
@@ -79,6 +84,50 @@ public class ContentController {
         ContentItem item = contentRepository.findByPath(normalizedPath)
             .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
         
+        // Handle markdown files
+        if (normalizedPath.toLowerCase().endsWith(".md")) {
+            try {
+                String content = contentRepository.getContent(normalizedPath);
+                Map<String, Object> processed = markdownService.processMarkdown(content);
+                
+                // Extract file name without extension
+                String fileName = item.name();
+                if (fileName.endsWith(".md")) {
+                    fileName = fileName.substring(0, fileName.length() - 3);
+                }
+                
+                // Create response map to match the exact structure of the JS backend
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("headings", processed.get("headings"));
+                response.put("markdown", processed.get("markdown"));
+                
+                // Add metadata with proper structure
+                ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
+                Map<String, Object> metadataMap = new LinkedHashMap<>();
+                metadataMap.put("title", metadata.title());
+                metadataMap.put("tags", metadata.tags());
+                response.put("metadata", metadataMap);
+                
+                // Add name and path
+                response.put("name", fileName);
+                response.put("path", normalizedPath);
+                
+                // Set response headers to match the JS backend
+                return ResponseEntity.ok()
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("Access-Control-Allow-Credentials", "true")
+                    .header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
+                    .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Pragma, Expires")
+                    .header("Access-Control-Expose-Headers", "Content-Length, Content-Type, Cache-Control, Expires")
+                    .header("Access-Control-Max-Age", "86400")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(response);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to read markdown content", e);
+            }
+        }
+        
+        // Handle non-markdown files and directories
         ContentItemDto dto;
         
         try {
