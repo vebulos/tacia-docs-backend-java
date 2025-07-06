@@ -15,27 +15,36 @@ import java.nio.file.Paths;
 public class ContentDirectoryInitializer {
     private static final Logger log = LoggerFactory.getLogger(ContentDirectoryInitializer.class);
 
-    @Value("${app.content.root-directory:./DATA/content}")
+    @Value("${contentDir:./content}")
     private String contentRoot;
 
     @Bean
     public CommandLineRunner initContentDirectory() {
         return args -> {
             Path contentPath = Paths.get(contentRoot).toAbsolutePath().normalize();
-            // Ensure parent directory (DATA) exists
-            Path parentDir = contentPath.getParent();
-            if (parentDir != null && !Files.exists(parentDir)) {
-                log.info("Creating parent directory: {}", parentDir);
-                Files.createDirectories(parentDir);
+            
+            // Check if directory exists
+            boolean exists = Files.exists(contentPath);
+            boolean isDirectory = exists && Files.isDirectory(contentPath);
+            boolean isWritable = exists && Files.isWritable(contentPath);
+            
+            log.info("Content directory: {}", contentPath);
+            log.info("Content directory exists: {}", exists);
+            
+            if (exists) {
+                log.info("Content directory is directory: {}", isDirectory);
+                log.info("Content directory is writable: {}", isWritable);
+                
+                if (!isDirectory) {
+                    log.error("Content path exists but is not a directory: {}", contentPath);
+                }
+                if (!isWritable) {
+                    log.error("Content directory is not writable: {}", contentPath);
+                }
+            } else {
+                log.error("Content directory does not exist: {}", contentPath);
+                log.error("Please create the directory manually and ensure it has the correct permissions.");
             }
-            // Ensure content directory exists
-            if (!Files.exists(contentPath)) {
-                log.info("Creating content directory: {}", contentPath);
-                Files.createDirectories(contentPath);
-            }
-            log.info("Using content directory: {}", contentPath);
-            log.info("Content directory exists: {}", Files.exists(contentPath));
-            log.info("Content directory is writable: {}", Files.isWritable(contentPath));
         };
     }
 }

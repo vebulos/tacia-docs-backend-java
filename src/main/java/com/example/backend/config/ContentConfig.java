@@ -20,7 +20,7 @@ public class ContentConfig {
     }
 
     @Bean
-    public Path contentPath(@Value("${app.content.root-directory:./DATA/content}") String contentRoot) {
+    public Path contentPath(@Value("${contentDir:./content}") String contentRoot) {
         return Paths.get(contentRoot).toAbsolutePath().normalize();
     }
 }
