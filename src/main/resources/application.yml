@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: mxc-backend
+  
+  # Configuration for the embedded server
+  main:
+    banner-mode: "off"
+
+# Server configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+# Logging configuration (simplified)
+logging:
+  level:
+    root: INFO
+    com.example.backend: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# API Documentation
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# Application specific properties
+app:
+  content:
+    root-directory: ${CONTENT_ROOT:./content}  # Can be overridden by environment variable

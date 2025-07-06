@@ -1,21 +1,14 @@
-package com.example.backend.infrastructure.filesystem;
+package com.example.backend.repository;
 
-import com.example.backend.domain.model.ContentItem;
-import com.example.backend.domain.repository.ContentRepository;
-import com.example.backend.api.exception.ContentNotFoundException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Repository;
+import com.example.backend.model.ContentItem;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.*;
-import java.util.stream.Collectors;
+import java.io.IOException;
+import java.nio.file.StandardOpenOption;
 
 public class FileSystemContentRepository implements ContentRepository {
 
@@ -50,6 +43,58 @@ public class FileSystemContentRepository implements ContentRepository {
         } catch (IOException e) {
             throw new RuntimeException("Failed to read file attributes: " + path, e);
         }
+    }
+
+    @Override
+    public List<ContentItem> findDescendants(String path) {
+        List<ContentItem> descendants = new ArrayList<>();
+        Path startPath = resolvePath(path);
+
+        if (!Files.exists(startPath)) {
+            return descendants;
+        }
+
+        try {
+            Files.walkFileTree(startPath, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    try {
+                        String relativePath = "/" + contentRoot.relativize(file).toString().replace("\\", "/");
+                        String name = getFileName(file);
+                        String type = "file";
+                        long size = attrs.size();
+                        Instant lastModified = attrs.lastModifiedTime().toInstant();
+
+                        descendants.add(new ContentItem(name, type, relativePath, size, lastModified));
+                    } catch (Exception e) {
+                        // Skip files we can't process
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (!dir.equals(startPath)) { // Don't include the starting directory itself
+                        try {
+                            String relativePath = "/" + contentRoot.relativize(dir).toString().replace("\\", "/") + "/";
+                            String name = getFileName(dir);
+                            String type = "directory";
+                            long size = 0; // Directories don't have size
+                            Instant lastModified = attrs.lastModifiedTime().toInstant();
+
+                            descendants.add(new ContentItem(name, type, relativePath, size, lastModified));
+                        } catch (Exception e) {
+                            // Skip directories we can't process
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to walk directory tree: " + path, e);
+        }
+
+        return descendants;
     }
 
     @Override
@@ -156,6 +201,43 @@ public class FileSystemContentRepository implements ContentRepository {
     public String readContent(String path) throws IOException {
         return Files.readString(resolvePath(path));
     }
+    
+    @Override
+    public String getContent(String path) throws IOException {
+        // Remove .md extension if present for consistency with JS implementation
+        String normalizedPath = path;
+        if (normalizedPath.endsWith(".md")) {
+            normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 3);
+        }
+        
+        // Try with .md extension first
+        try {
+            return Files.readString(resolvePath(normalizedPath + ".md"));
+        } catch (NoSuchFileException e) {
+            // If .md file not found, try without extension
+            return Files.readString(resolvePath(normalizedPath));
+        }
+    }
+    
+    @Override
+    public ContentItem saveContent(String path, String content) throws IOException {
+        Path fullPath = resolvePath(path);
+        
+        // Create parent directories if they don't exist
+        Files.createDirectories(fullPath.getParent());
+        
+        // Write the content to the file
+        Files.writeString(fullPath, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        
+        // Get the file attributes to return the updated item
+        BasicFileAttributes attrs = Files.readAttributes(fullPath, BasicFileAttributes.class);
+        String name = getFileName(fullPath);
+        String type = Files.isDirectory(fullPath) ? "directory" : "file";
+        long size = attrs.size();
+        Instant lastModified = attrs.lastModifiedTime().toInstant();
+        
+        return new ContentItem(name, type, "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/"), size, lastModified);
+    }
 
     private Path resolvePath(String path) {
         if (path == null || path.isEmpty() || "/".equals(path)) {
@@ -181,7 +263,38 @@ public class FileSystemContentRepository implements ContentRepository {
         }
     }
 
+    /**
+     * Get all markdown files in the content directory
+     * @return List of paths to markdown files
+     */
+    public List<String> getAllMarkdownFiles() {
+        List<String> markdownFiles = new ArrayList<>();
+        try {
+            Files.walkFileTree(contentRoot, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (file.toString().toLowerCase().endsWith(".md")) {
+                        String relativePath = "/" + contentRoot.relativize(file).toString().replace("\\", "/");
+                        markdownFiles.add(relativePath);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to find markdown files", e);
+        }
+        return markdownFiles;
+    }
+
     private String getFileName(Path path) {
         return path.getFileName() != null ? path.getFileName().toString() : "";
+    }
+    
+    @Override
+    public String getRelativePath(Path path) {
+        // Convertir le chemin absolu en chemin relatif par rapport à contentRoot
+        Path relativePath = contentRoot.relativize(path.normalize().toAbsolutePath());
+        // Remplacer les backslashes par des forward slashes pour la cohérence
+        return relativePath.toString().replace("\\", "/");
     }
 }

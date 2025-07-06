@@ -1,6 +1,6 @@
 package com.example.backend;
 
-import com.example.backend.domain.repository.ContentRepository;
+import com.example.backend.repository.ContentRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;

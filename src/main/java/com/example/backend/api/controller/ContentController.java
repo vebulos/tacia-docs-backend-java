@@ -2,17 +2,25 @@ package com.example.backend.api.controller;
 
 import com.example.backend.api.dto.ContentItemDto;
 import com.example.backend.api.exception.ContentNotFoundException;
-import com.example.backend.domain.model.ContentItem;
-import com.example.backend.domain.repository.ContentRepository;
+import com.example.backend.model.ContentItem;
+import com.example.backend.repository.ContentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * REST controller for managing content (files and directories)
+ */
 @RestController
 @RequestMapping("/api")
 public class ContentController {
@@ -22,16 +30,18 @@ public class ContentController {
 
     public ContentController(ContentRepository contentRepository) {
         this.contentRepository = contentRepository;
-        logger.info("ContentController initialized");
     }
 
+    /**
+     * List content at the specified path
+     */
     @GetMapping("/content")
     public ResponseEntity<List<ContentItemDto>> listContent(
             @RequestParam(required = false, defaultValue = "/") String path) {
+        
         String normalizedPath = normalizePath(path);
-        logger.info("Listing content at path: {}", normalizedPath);
-
         List<ContentItem> items = contentRepository.findChildren(normalizedPath);
+        
         List<ContentItemDto> dtos = items.stream()
             .map(ContentItemDto::fromDomain)
             .collect(Collectors.toList());
@@ -39,69 +49,124 @@ public class ContentController {
         return ResponseEntity.ok(dtos);
     }
 
-    @GetMapping("/content/item")
+    /**
+     * Get content at the specified path
+     */
+    /**
+     * Extracts the path from the request URL
+     */
+    private String extractPathFromRequest() {
+        // Get the full request URI and extract the part after /content/
+        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+        if (requestAttributes instanceof ServletRequestAttributes) {
+            HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
+            String requestURI = request.getRequestURI();
+            int contentIndex = requestURI.indexOf("/content/");
+            if (contentIndex >= 0) {
+                return requestURI.substring(contentIndex + 8); // +8 to skip "/content/"
+            }
+        }
+        return "/";
+    }
+
+    @GetMapping("/content/**")
     public ResponseEntity<ContentItemDto> getContent(
-            @RequestParam String path,
             @RequestParam(required = false, defaultValue = "false") boolean recursive) {
-        String normalizedPath = normalizePath(path);
-        logger.info("Getting content at path: {} (recursive: {})", normalizedPath, recursive);
-
-        return contentRepository.findByPath(normalizedPath)
-            .map(item -> {
-                try {
-                    if ("file".equals(item.type())) {
-                        String content = contentRepository.readContent(normalizedPath);
-                        return ResponseEntity.ok(ContentItemDto.withContent(item, content));
-                    } else {
-                        // For directories, always include children when recursive is true
-                        if (recursive) {
-                            List<ContentItemDto> children = getChildrenRecursively(normalizedPath);
-                            return ResponseEntity.ok(ContentItemDto.withChildren(item, children));
-                        } else {
-                            // For non-recursive, just return the directory info
-                            return ResponseEntity.ok(ContentItemDto.fromDomain(item));
-                        }
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to read content: " + normalizedPath, e);
-                }
-            })
-            .orElseThrow(() -> new ContentNotFoundException(normalizedPath));
-    }
-
-    @PostMapping("/content")
-    public ResponseEntity<ContentItemDto> saveContent(
-            @RequestParam String path,
-            @RequestBody String content) {
-        String normalizedPath = normalizePath(path);
-        logger.info("Saving content to: {}", normalizedPath);
-
-        ContentItem item = contentRepository.save(
-            new ContentItem(
-                getFileName(normalizedPath),
-                "file",
-                normalizedPath,
-                content.getBytes().length,
-                java.time.Instant.now()
-            ),
-            content
-        );
         
-        return ResponseEntity.ok(ContentItemDto.withContent(item, content));
+        String path = extractPathFromRequest();
+        String normalizedPath = normalizePath(path);
+
+        ContentItem item = contentRepository.findByPath(normalizedPath)
+            .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
+        
+        ContentItemDto dto;
+        
+        try {
+            // Handle files
+            if ("file".equals(item.type())) {
+                String content = contentRepository.getContent(normalizedPath);
+                dto = ContentItemDto.withContent(item, content, null);
+            } 
+            // Handle directories
+            else {
+                List<ContentItem> children = recursive ? 
+                    contentRepository.findDescendants(normalizedPath) : 
+                    contentRepository.findChildren(normalizedPath);
+                    
+                List<ContentItemDto> childDtos = children.stream()
+                    .map(ContentItemDto::fromDomain)
+                    .collect(Collectors.toList());
+                    
+                dto = ContentItemDto.withChildren(item, childDtos);
+            }
+            
+            return ResponseEntity.ok(dto);
+            
+        } catch (IOException e) {
+            logger.error("Error reading content for path {}: {}", normalizedPath, e.getMessage(), e);
+            throw new RuntimeException("Failed to read content: " + e.getMessage(), e);
+        }
     }
 
-    @DeleteMapping("/content")
-    public ResponseEntity<Void> deleteContent(@RequestParam String path) {
+    /**
+     * Save content to the specified path
+     */
+    @PostMapping("/content/**")
+    public ResponseEntity<ContentItemDto> saveContent(@RequestBody String content) {
+        String path = extractPathFromRequest();
         String normalizedPath = normalizePath(path);
-        logger.info("Deleting content at: {}", normalizedPath);
+
+        // Create or update the file
+        ContentItem savedItem;
+        try {
+            // First check if the parent directory exists
+            String parentPath = getParentPath(normalizedPath);
+            if (!parentPath.isEmpty() && !"/".equals(parentPath) && 
+                !contentRepository.findByPath(parentPath).isPresent()) {
+                // Create parent directories if they don't exist
+                contentRepository.saveContent(parentPath, "");
+            }
+            
+            // Now save the file
+            savedItem = contentRepository.saveContent(normalizedPath, content);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to save content: " + e.getMessage(), e);
+        }
+        
+        ContentItemDto dto = ContentItemDto.withContent(savedItem, content, null);
+        
+        return ResponseEntity.ok(dto);
+    }
+
+    /**
+     * Delete content at the specified path
+     */
+    @DeleteMapping("/content/**")
+    public ResponseEntity<Void> deleteContent() {
+        String path = extractPathFromRequest();
+        String normalizedPath = normalizePath(path);
 
         if (!contentRepository.exists(normalizedPath)) {
+            logger.warn("Content not found for deletion: {}", normalizedPath);
             throw new ContentNotFoundException(normalizedPath);
         }
-        contentRepository.delete(normalizedPath);
-        return ResponseEntity.noContent().build();
+        
+        try {
+            contentRepository.delete(normalizedPath);
+            logger.info("Successfully deleted content at: {}", normalizedPath);
+            return ResponseEntity.noContent().build();
+        } catch (Exception e) {
+            logger.error("Error deleting content at {}: {}", normalizedPath, e.getMessage(), e);
+            throw new RuntimeException("Failed to delete content: " + normalizedPath, e);
+        }
     }
 
+    /**
+     * Recursively gets all children of a directory
+     * 
+     * @param path The directory path
+     * @return List of content item DTOs with all descendants
+     */
     private List<ContentItemDto> getChildrenRecursively(String path) {
         logger.debug("Getting children for path: {}", path);
         // Ensure the path is normalized before querying children
@@ -122,11 +187,21 @@ public class ContentController {
                     logger.debug("Found {} nested children in {}", nestedChildren.size(), childPath);
                     return ContentItemDto.withChildren(item, nestedChildren);
                 }
+                // For files, just return the basic info without content
                 return ContentItemDto.fromDomain(item);
             })
             .collect(Collectors.toList());
     }
 
+    /**
+     * Normalizes a path to a consistent format
+     * - Ensures path starts with a single slash
+     * - Removes trailing slashes (except for root)
+     * - Handles null or empty paths
+     * 
+     * @param path The path to normalize
+     * @return The normalized path
+     */
     private String normalizePath(String path) {
         if (path == null || path.trim().isEmpty() || "/".equals(path.trim())) {
             return "/";
@@ -143,11 +218,40 @@ public class ContentController {
         return normalized;
     }
 
+    /**
+     * Gets the parent path of the given path
+     * 
+     * @param path The full path
+     * @return The parent path or empty string if no parent
+     */
+    private String getParentPath(String path) {
+        if (path == null || path.isEmpty() || "/".equals(path)) {
+            return "";
+        }
+        
+        // Remove trailing slash if present
+        String normalizedPath = path.endsWith("/") ? 
+            path.substring(0, path.length() - 1) : path;
+            
+        int lastSlash = normalizedPath.lastIndexOf('/');
+        if (lastSlash <= 0) {
+            return "/";
+        }
+        
+        return normalizedPath.substring(0, lastSlash);
+    }
+    
+    /**
+     * Extracts the file name from a path.
+     * 
+     * @param path The full path
+     * @return The file name or empty string for root
+     */
     private String getFileName(String path) {
         if (path == null || path.equals("/")) {
             return "";
         }
         int lastSlash = path.lastIndexOf('/');
-        return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+        return lastSlash == -1 ? path : path.substring(lastSlash + 1);
     }
 }

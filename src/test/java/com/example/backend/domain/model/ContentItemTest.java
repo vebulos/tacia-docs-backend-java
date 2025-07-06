@@ -1,5 +1,6 @@
 package com.example.backend.domain.model;
 
+import com.example.backend.model.ContentItem;
 import org.junit.jupiter.api.Test;
 import java.time.Instant;
 
