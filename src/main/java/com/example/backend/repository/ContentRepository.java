@@ -63,10 +63,9 @@ public interface ContentRepository {
     /**
      * Get content as a string for the given path
      * @param path Path to the content
-     * @return Content as string
-     * @throws IOException If the content cannot be read
+     * @return Optional containing the content as string if it exists, empty otherwise
      */
-    String getContent(String path) throws IOException;
+    Optional<String> getContent(String path);
     
     /**
      * Get all markdown files in the content directory

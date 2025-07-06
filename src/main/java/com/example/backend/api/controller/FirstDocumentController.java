@@ -18,12 +18,6 @@ import java.util.TreeMap;
  */
 @RestController
 @RequestMapping("/api/first-document")
-@CrossOrigin(
-    origins = "http://localhost:4200",
-    allowedHeaders = "*",
-    methods = {RequestMethod.GET, RequestMethod.OPTIONS},
-    allowCredentials = "true"
-)
 public class FirstDocumentController {
     
     private static final Logger logger = LoggerFactory.getLogger(FirstDocumentController.class);

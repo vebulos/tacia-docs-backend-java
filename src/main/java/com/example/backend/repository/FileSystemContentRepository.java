@@ -35,8 +35,10 @@ public class FileSystemContentRepository implements ContentRepository {
 
             // Use the normalized path that matches how we store it
             String normalizedPath = "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/");
-            if (type.equals("directory") && !normalizedPath.endsWith("/")) {
-                normalizedPath += "/";
+            
+            // For directories, ensure path doesn't end with a slash
+            if (normalizedPath.endsWith("/")) {
+                normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 1);
             }
 
             return Optional.of(new ContentItem(name, type, normalizedPath, size, lastModified));
@@ -203,19 +205,27 @@ public class FileSystemContentRepository implements ContentRepository {
     }
     
     @Override
-    public String getContent(String path) throws IOException {
-        // Remove .md extension if present for consistency with JS implementation
-        String normalizedPath = path;
-        if (normalizedPath.endsWith(".md")) {
-            normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 3);
-        }
-        
-        // Try with .md extension first
+    public Optional<String> getContent(String path) {
         try {
-            return Files.readString(resolvePath(normalizedPath + ".md"));
-        } catch (NoSuchFileException e) {
-            // If .md file not found, try without extension
-            return Files.readString(resolvePath(normalizedPath));
+            // Remove .md extension if present for consistency with JS implementation
+            String normalizedPath = path;
+            if (normalizedPath.endsWith(".md")) {
+                normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 3);
+            }
+            
+            // Try with .md extension first
+            try {
+                return Optional.of(Files.readString(resolvePath(normalizedPath + ".md")));
+            } catch (NoSuchFileException e) {
+                // If .md file not found, try without extension
+                try {
+                    return Optional.of(Files.readString(resolvePath(normalizedPath)));
+                } catch (NoSuchFileException e2) {
+                    return Optional.empty();
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read content: " + path, e);
         }
     }
     
@@ -292,9 +302,9 @@ public class FileSystemContentRepository implements ContentRepository {
     
     @Override
     public String getRelativePath(Path path) {
-        // Convertir le chemin absolu en chemin relatif par rapport à contentRoot
+        // Convert absolute path to relative path from contentRoot
         Path relativePath = contentRoot.relativize(path.normalize().toAbsolutePath());
-        // Remplacer les backslashes par des forward slashes pour la cohérence
+        // Replace backslashes with forward slashes for consistency
         return relativePath.toString().replace("\\", "/");
     }
 }

@@ -13,7 +13,7 @@ public record ContentItem(
         return new ContentItem(
             name, 
             "directory", 
-            ensurePathEndsWithSlash(path), 
+            path, // Do not add trailing slash
             0, 
             lastModified
         );
@@ -29,6 +29,7 @@ public record ContentItem(
         );
     }
 
+    // Currently unused method
     private static String ensurePathEndsWithSlash(String path) {
         return path.endsWith("/") ? path : path + "/";
     }

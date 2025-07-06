@@ -19,7 +19,7 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ContentItemDto(
     @JsonProperty("name") String name,                // Name of the file or directory
-    @JsonProperty("path") String path,                // Relative path of the item from the current directory
+    @JsonProperty("path") String path,                // Full path of the item from content root
     @JsonProperty("type") String type,                // 'file' or 'directory'
     @JsonIgnore Long size,                             // Size in bytes (exposed via getter)
     @JsonIgnore Instant lastModified,                  // Last modification timestamp (formatted via getter)
@@ -31,6 +31,37 @@ public record ContentItemDto(
     @JsonProperty("isDirectory")
     public boolean isDirectory() {
         return "directory".equals(type);
+    }
+    
+    @JsonProperty("title")
+    public String getTitle() {
+        // For directories, return null to match JS backend
+        if (isDirectory()) {
+            return null;
+        }
+        
+        // If we have metadata with a title, use that first
+        if (metadata != null && metadata.title() != null && !metadata.title().isEmpty()) {
+            return metadata.title();
+        }
+        
+        // For Markdown files, try to get title from content
+        if (type != null && type.equals("file") && content != null) {
+            if (content.startsWith("# ")) {
+                // Extract first line after # for title
+                int endOfFirstLine = content.indexOf("\n");
+                if (endOfFirstLine > 2) {
+                    return content.substring(2, endOfFirstLine).trim();
+                }
+            }
+            // Fallback to filename without extension for Markdown files
+            if (name.endsWith(".md")) {
+                return name.substring(0, name.length() - 3);
+            }
+        }
+        
+        // For non-markdown files, return null to match JS backend
+        return null;
     }
     
     @JsonProperty("lastModified")
@@ -47,34 +78,38 @@ public record ContentItemDto(
         return size != null ? size : 0L;
     }
     /**
-     * Creates a DTO from a domain model with relative path
+     * Creates a DTO from a domain model with full path
      */
     public static ContentItemDto fromDomain(ContentItem item, String basePath) {
-        // Calculate relative path
-        String relativePath = item.path();
-        if (basePath != null && !basePath.isEmpty() && !"/".equals(basePath) 
-                && relativePath.startsWith(basePath)) {
-            relativePath = relativePath.substring(basePath.length());
-            // Remove leading slash if present
-            if (relativePath.startsWith("/")) {
-                relativePath = relativePath.substring(1);
-            }
+        // Use full path for the item
+        String fullPath = item.path();
+        
+        // Remove leading slash if present (to match JS backend)
+        if (fullPath.startsWith("/")) {
+            fullPath = fullPath.substring(1);
         }
         
-        // If it's a directory, ensure the path ends with a slash
-        if ("directory".equals(item.type()) && !relativePath.endsWith("/") && !relativePath.isEmpty()) {
-            relativePath = relativePath + "/";
+        // For directories, ensure the path does NOT end with a slash to match JS backend
+        if (fullPath.endsWith("/")) {
+            fullPath = fullPath.substring(0, fullPath.length() - 1);
+        }
+        
+        // For markdown files, set the title from the filename as fallback
+        ContentMetadataDto metadata = null;
+        if ("file".equals(item.type()) && item.name().toLowerCase().endsWith(".md")) {
+            String title = item.name().substring(0, item.name().length() - 3); // Remove .md
+            metadata = new ContentMetadataDto(title, List.of());
         }
         
         return new ContentItemDto(
             item.name(),
-            relativePath,
+            fullPath,
             item.type(),
             "file".equals(item.type()) ? item.size() : 0,
             item.lastModified(),
             null,  // Content is loaded separately
             null,  // Children are loaded separately
-            null   // Metadata is extracted separately
+            metadata
         );
     }
     

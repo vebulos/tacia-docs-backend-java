@@ -16,14 +16,16 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -93,13 +95,19 @@ public class ContentController {
                     // URL decode the path to handle spaces (%20) and other encoded characters
                     String decodedPath = URLDecoder.decode(rawPath, StandardCharsets.UTF_8);
                     logger.debug("Extracted path - raw: '{}', decoded: '{}'", rawPath, decodedPath);
-                    return normalizePath(decodedPath);
+                    
+                    // Normalize and remove leading slash to match JS backend
+                    String normalized = normalizePath(decodedPath);
+                    if (normalized.startsWith("/")) {
+                        normalized = normalized.substring(1);
+                    }
+                    return normalized;
                 }
             }
-            return "/";
+            return "";
         } catch (Exception e) {
             logger.error("Error extracting path from request", e);
-            return "/";
+            return "";
         }
     }
 
@@ -111,79 +119,114 @@ public class ContentController {
         String normalizedPath = normalizePath(path);
         logger.debug("Requested path: '{}', normalized: '{}'", path, normalizedPath);
 
-        ContentItem item = contentRepository.findByPath(normalizedPath)
+        // For root path, ensure we don't have a leading slash
+        String lookupPath = normalizedPath.isEmpty() ? "" : normalizedPath;
+        
+        ContentItem item = contentRepository.findByPath(lookupPath)
             .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
         
-        try {
-            // Handle markdown files
-            if (normalizedPath.toLowerCase().endsWith(".md")) {
-                String content = contentRepository.getContent(normalizedPath);
+        // Handle regular files
+        if ("file".equals(item.type())) {
+            // For non-markdown files, return the raw content
+            if (!item.name().toLowerCase().endsWith(".md")) {
+                Optional<String> contentOpt = contentRepository.getContent(lookupPath);
+                if (contentOpt.isEmpty()) {
+                    throw new ContentNotFoundException("Content not found: " + lookupPath);
+                }
+                return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .header(HttpHeaders.CONTENT_ENCODING, StandardCharsets.UTF_8.name())
+                    .body(contentOpt.get());
+            } else {
+                // For markdown files, process the content
+                Optional<String> contentOpt = contentRepository.getContent(lookupPath);
+                if (contentOpt.isEmpty()) {
+                    throw new ContentNotFoundException("Content not found: " + lookupPath);
+                }
+                String content = contentOpt.get();
+                
+                // Process markdown to HTML
                 Map<String, Object> processed = markdownService.processMarkdown(content);
                 
-                // Extract file name without extension
-                String fileName = item.name();
-                if (fileName.endsWith(".md")) {
-                    fileName = fileName.substring(0, fileName.length() - 3);
+                // Get title from metadata if available
+                String title = null;
+                if (processed.containsKey("metadata")) {
+                    ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
+                    title = metadata.title();
                 }
                 
-                // Create response map to match the expected structure
+                // If no title in metadata, try to extract from content
+                if ((title == null || title.isEmpty()) && content.startsWith("# ")) {
+                    int endOfFirstLine = content.indexOf("\n");
+                    if (endOfFirstLine > 2) {
+                        title = content.substring(2, endOfFirstLine).trim();
+                    }
+                }
+                
+                // Fallback to filename without extension
+                if (title == null || title.isEmpty()) {
+                    title = item.name().replace(".md", "");
+                }
+                
+                // Ensure we have a non-null title
+                if (title == null) {
+                    title = "";
+                }
+                
+                // Create response with content
                 Map<String, Object> response = new LinkedHashMap<>();
+                response.put("type", "file");
+                response.put("name", item.name());
+                response.put("path", item.path());
+                response.put("content", processed.get("html"));
+                response.put("lastModified", item.lastModified().toString());
+                response.put("title", title);
+                response.put("size", item.size());
+                
+                // Add additional markdown-specific fields
                 response.put("headings", processed.get("headings"));
                 response.put("markdown", processed.get("markdown"));
                 
-                // Add metadata with proper structure
-                ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
-                Map<String, Object> metadataMap = new LinkedHashMap<>();
-                metadataMap.put("title", metadata.title());
-                metadataMap.put("tags", metadata.tags());
-                response.put("metadata", metadataMap);
+                // Add metadata if available
+                if (processed.containsKey("metadata")) {
+                    ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
+                    Map<String, Object> metadataMap = new LinkedHashMap<>();
+                    metadataMap.put("title", metadata.title());
+                    metadataMap.put("tags", metadata.tags());
+                    response.put("metadata", metadataMap);
+                }
                 
-                // Add name and path
-                response.put("name", fileName);
-                response.put("path", normalizedPath);
-                
-                logger.debug("Returning markdown content for: {}", normalizedPath);
                 return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_JSON)
-                    .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
+                    .header(HttpHeaders.CONTENT_ENCODING, StandardCharsets.UTF_8.name())
                     .body(response);
             }
-            
-            // Handle non-markdown files
-            if ("file".equals(item.type())) {
-                String content = contentRepository.getContent(normalizedPath);
-                ContentItemDto dto = ContentItemDto.withContent(item, content, null);
-                logger.debug("Returning file content for: {}", normalizedPath);
-                return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_PLAIN)
-                    .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
-                    .body(content);
-            } 
-            
-            // Handle directories - always return a ContentListResponse for directories
-            List<ContentItem> children = recursive ? 
-                contentRepository.findDescendants(normalizedPath) : 
-                contentRepository.findChildren(normalizedPath);
-                
-            // Convert to DTOs with the normalized path as base for relative paths
-            List<ContentItemDto> childDtos = children.stream()
-                .map(child -> ContentItemDto.fromDomain(child, normalizedPath))
-                .collect(Collectors.toList());
-            
-            // Create the response with the directory listing
-            ContentListResponse response = ContentListResponse.of(childDtos, normalizedPath);
-            logger.debug("Returning directory listing for: {} ({} items)", normalizedPath, childDtos.size());
-            
-            // Set content type with UTF-8 encoding
-            return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_JSON)
-                .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
-                .body(response);
-            
-        } catch (IOException e) {
-            logger.error("Error reading content for path {}: {}", normalizedPath, e.getMessage(), e);
-            throw new RuntimeException("Failed to read content: " + e.getMessage(), e);
         }
+        
+        // Handle directories
+        List<ContentItem> children = recursive ? 
+            contentRepository.findDescendants(lookupPath) :
+            contentRepository.findChildren(lookupPath);
+            
+        // Convert to DTOs with full paths (relative to content root)
+        List<ContentItemDto> childDtos = new ArrayList<>();
+        for (ContentItem child : children) {
+            // Skip the current directory itself in recursive mode
+            if (recursive && child.path().equals("/" + normalizedPath)) {
+                continue;
+            }
+            childDtos.add(ContentItemDto.fromDomain(child, ""));
+        }
+            
+        // Create response with the requested path (which is already normalized)
+        ContentListResponse response = ContentListResponse.of(childDtos, normalizedPath);
+        logger.debug("Returning directory listing for: {} ({} items)", normalizedPath, childDtos.size());
+        
+        // Set content type with UTF-8 encoding
+        return ResponseEntity.ok()
+            .contentType(MediaType.APPLICATION_JSON)
+            .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
+            .body(response);
     }
 
     /**
@@ -280,32 +323,22 @@ public class ContentController {
     /**
      * Normalizes a path to a consistent format
      * - Removes duplicate slashes
-     * - Ensures path starts with a single slash
-     * - Removes trailing slashes (except for root)
+     * - Removes leading and trailing slashes
      * - Handles null or empty paths
+     * - Matches the behavior of the JS backend
      * 
      * @param path The path to normalize
-     * @return The normalized path
+     * @return The normalized path without leading/trailing slashes
      */
     private String normalizePath(String path) {
-        if (path == null || path.trim().isEmpty() || "/".equals(path.trim())) {
-            return "/";
+        if (path == null || path.trim().isEmpty()) {
+            return "";
         }
         
-        // Normalize the path
+        // Trim and normalize slashes
         String normalized = path.trim()
             .replaceAll("/+", "/")  // Replace multiple slashes with a single slash
             .replaceAll("^/|/$", ""); // Remove leading and trailing slashes
-            
-        // Handle root path
-        if (normalized.isEmpty()) {
-            return "/";
-        }
-        
-        // Ensure path starts with a single slash
-        if (!normalized.startsWith("/")) {
-            normalized = "/" + normalized;
-        }
         
         return normalized;
     }
