@@ -19,6 +19,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,33 +70,37 @@ public class ContentController {
      * Get content at the specified path
      */
     /**
-     * Extracts the path from the request URL
+     * Extracts and decodes the path from the request URL
+     * Handles URL-encoded characters like %20 for spaces
      */
     private String extractPathFromRequest() {
-        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
-        if (requestAttributes instanceof ServletRequestAttributes) {
-            HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
-            String requestURI = request.getRequestURI();
-            
-            // Remove context path if present
-            String contextPath = request.getContextPath();
-            if (contextPath != null && !contextPath.isEmpty() && requestURI.startsWith(contextPath)) {
-                requestURI = requestURI.substring(contextPath.length());
+        try {
+            RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+            if (attributes instanceof ServletRequestAttributes) {
+                HttpServletRequest request = ((ServletRequestAttributes) attributes).getRequest();
+                String requestURI = request.getRequestURI();
+                String contextPath = request.getContextPath();
+                
+                // Remove context path if present
+                if (contextPath != null && !contextPath.isEmpty() && requestURI.startsWith(contextPath)) {
+                    requestURI = requestURI.substring(contextPath.length());
+                }
+                
+                // Find the /content/ part
+                int contentIndex = requestURI.indexOf("/content/");
+                if (contentIndex != -1) {
+                    String rawPath = requestURI.substring(contentIndex + 9); // 9 is the length of "/content/"
+                    // URL decode the path to handle spaces (%20) and other encoded characters
+                    String decodedPath = URLDecoder.decode(rawPath, StandardCharsets.UTF_8);
+                    logger.debug("Extracted path - raw: '{}', decoded: '{}'", rawPath, decodedPath);
+                    return normalizePath(decodedPath);
+                }
             }
-            
-            // Remove /api if present (since controller is mapped to /api)
-            if (requestURI.startsWith("/api")) {
-                requestURI = requestURI.substring(4); // Remove "/api"
-            }
-            
-            // Extract path after /content/
-            int contentIndex = requestURI.indexOf("/content/");
-            if (contentIndex >= 0) {
-                String path = requestURI.substring(contentIndex + 8); // +8 to skip "/content/"
-                return path.isEmpty() ? "/" : path;
-            }
+            return "/";
+        } catch (Exception e) {
+            logger.error("Error extracting path from request", e);
+            return "/";
         }
-        return "/";
     }
 
     @GetMapping("/content/**")
@@ -137,7 +143,10 @@ public class ContentController {
                 response.put("path", normalizedPath);
                 
                 logger.debug("Returning markdown content for: {}", normalizedPath);
-                return ResponseEntity.ok(response);
+                return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
+                    .body(response);
             }
             
             // Handle non-markdown files
@@ -145,7 +154,10 @@ public class ContentController {
                 String content = contentRepository.getContent(normalizedPath);
                 ContentItemDto dto = ContentItemDto.withContent(item, content, null);
                 logger.debug("Returning file content for: {}", normalizedPath);
-                return ResponseEntity.ok(dto);
+                return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
+                    .body(content);
             } 
             
             // Handle directories - always return a ContentListResponse for directories
