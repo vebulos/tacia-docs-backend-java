@@ -85,37 +85,49 @@ public class FirstDocumentController {
     
     /**
      * Recursively finds the first markdown file in a directory
+     * Matches the behavior of the backend-js implementation:
+     * - Sorts entries (directories first, then files)
+     * - Skips hidden directories (starting with '.')
      */
     private Path findFirstMarkdownFile(Path directory) throws IOException {
-        final Path[] firstMarkdownFile = { null };
-        
-        Files.walkFileTree(directory, new SimpleFileVisitor<Path>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (file.toString().toLowerCase().endsWith(".md")) {
-                    firstMarkdownFile[0] = file;
-                    return FileVisitResult.TERMINATE;
-                }
-                return FileVisitResult.CONTINUE;
-            }
+        // Get all entries in the directory
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
+            // Sort entries (directories first, then files, both alphabetically)
+            Map<Boolean, java.util.List<Path>> entries = new TreeMap<>();
+            entries.put(Boolean.TRUE, new java.util.ArrayList<>());  // Directories
+            entries.put(Boolean.FALSE, new java.util.ArrayList<>()); // Files
             
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            for (Path entry : stream) {
+                boolean isDir = Files.isDirectory(entry);
                 // Skip hidden directories
-                if (dir.getFileName().toString().startsWith(".")) {
-                    return FileVisitResult.SKIP_SUBTREE;
+                if (isDir && entry.getFileName().toString().startsWith(".")) {
+                    continue;
                 }
-                return FileVisitResult.CONTINUE;
+                entries.get(isDir).add(entry);
             }
             
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                logger.warn("Failed to access file: " + file, exc);
-                return FileVisitResult.CONTINUE;
+            // Sort each list alphabetically
+            Comparator<Path> pathComparator = Comparator.comparing(p -> p.getFileName().toString().toLowerCase());
+            entries.get(true).sort(pathComparator);
+            entries.get(false).sort(pathComparator);
+            
+            // First check files in the current directory
+            for (Path file : entries.get(false)) {
+                if (file.toString().toLowerCase().endsWith(".md")) {
+                    return file;
+                }
             }
-        });
-        
-        return firstMarkdownFile[0];
+            
+            // Then check directories recursively
+            for (Path dir : entries.get(true)) {
+                Path found = findFirstMarkdownFile(dir);
+                if (found != null) {
+                    return found;
+                }
+            }
+            
+            return null;
+        }
     }
     
     /**
