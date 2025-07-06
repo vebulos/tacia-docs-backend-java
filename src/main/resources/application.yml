@@ -5,18 +5,48 @@ spring:
   # Configuration for the embedded server
   main:
     banner-mode: "off"
+  
+  # Enable file system watching (for development)
+  devtools:
+    restart:
+      enabled: true
 
 # Server configuration
 server:
   port: 8080
   servlet:
     context-path: /
+    session:
+      tracking-modes: cookie
+      cookie:
+        http-only: true
+        secure: false
+    security:
+      xss-protection:
+        enabled: true
+        block: false
+      frame-options:
+        same-origin: true
+      headers:
+        cache: false
+        content-security-policy: ""
+        content-type: false
+        hsts: disable
+        referrer-policy: ""
+        xss-protection-header: ""
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: always
 
-# Logging configuration (simplified)
+# Logging configuration
 logging:
   level:
     root: INFO
     com.example.backend: DEBUG
+    org.springframework.web.cors: DEBUG
+    org.springframework.web.filter.CorsFilter: DEBUG
+    org.springframework.security.web.FilterChainProxy: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
@@ -26,6 +56,23 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# Actuator configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
 
 # Application specific properties
 app:
