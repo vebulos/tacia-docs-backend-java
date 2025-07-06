@@ -18,6 +18,12 @@ import java.util.TreeMap;
  */
 @RestController
 @RequestMapping("/api/first-document")
+@CrossOrigin(
+    origins = "http://localhost:4200",
+    allowedHeaders = "*",
+    methods = {RequestMethod.GET, RequestMethod.OPTIONS},
+    allowCredentials = "true"
+)
 public class FirstDocumentController {
     
     private static final Logger logger = LoggerFactory.getLogger(FirstDocumentController.class);
@@ -38,18 +44,31 @@ public class FirstDocumentController {
     public ResponseEntity<?> getFirstDocument(
             @RequestParam(required = false, defaultValue = "") String directory) {
         
-        logger.debug("Finding first document in directory: {}", directory);
+        logger.info("Finding first document in directory: '{}'", directory);
         
         try {
             String normalizedDir = normalizeDirectoryPath(directory);
+            logger.debug("Normalized directory path: '{}'", normalizedDir);
+            
             Path searchDir = contentRepository.getAbsolutePath(normalizedDir);
+            logger.debug("Absolute search path: '{}'", searchDir);
             
             // Verify the directory exists and is accessible
-            if (!Files.exists(searchDir) || !Files.isDirectory(searchDir)) {
-                logger.warn("Directory not found or not accessible: {}", searchDir);
+            if (!Files.exists(searchDir)) {
+                logger.warn("Directory does not exist: {}", searchDir);
                 return ResponseEntity.status(404).body(Map.of(
                     "error", "Directory not found",
-                    "message", "The requested directory was not found: " + directory
+                    "message", "The requested directory was not found: " + directory,
+                    "absolutePath", searchDir.toString()
+                ));
+            }
+            
+            if (!Files.isDirectory(searchDir)) {
+                logger.warn("Path is not a directory: {}", searchDir);
+                return ResponseEntity.status(400).body(Map.of(
+                    "error", "Not a directory",
+                    "message", "The specified path is not a directory: " + directory,
+                    "absolutePath", searchDir.toString()
                 ));
             }
             
@@ -90,6 +109,8 @@ public class FirstDocumentController {
      * - Skips hidden directories (starting with '.')
      */
     private Path findFirstMarkdownFile(Path directory) throws IOException {
+        logger.debug("Searching for markdown files in: {}", directory);
+        
         // Get all entries in the directory
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
             // Sort entries (directories first, then files, both alphabetically)
@@ -113,16 +134,26 @@ public class FirstDocumentController {
             
             // First check files in the current directory
             for (Path file : entries.get(false)) {
-                if (file.toString().toLowerCase().endsWith(".md")) {
+                String fileName = file.getFileName().toString();
+                if (fileName.toLowerCase().endsWith(".md")) {
+                    logger.debug("Found markdown file: {}", file);
                     return file;
+                } else {
+                    logger.trace("Skipping non-markdown file: {}", file);
                 }
             }
             
             // Then check directories recursively
             for (Path dir : entries.get(true)) {
-                Path found = findFirstMarkdownFile(dir);
-                if (found != null) {
-                    return found;
+                logger.debug("Searching in subdirectory: {}", dir);
+                try {
+                    Path found = findFirstMarkdownFile(dir);
+                    if (found != null) {
+                        return found;
+                    }
+                } catch (Exception e) {
+                    logger.warn("Error searching in directory {}: {}", dir, e.getMessage(), e);
+                    // Continue with next directory on error
                 }
             }
             

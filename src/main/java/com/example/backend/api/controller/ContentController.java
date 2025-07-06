@@ -1,6 +1,7 @@
 package com.example.backend.api.controller;
 
 import com.example.backend.api.dto.ContentItemDto;
+import com.example.backend.api.dto.ContentListResponse;
 import com.example.backend.api.dto.ContentMetadataDto;
 import com.example.backend.api.exception.ContentNotFoundException;
 import com.example.backend.model.ContentItem;
@@ -8,6 +9,8 @@ import com.example.backend.repository.ContentRepository;
 import com.example.backend.service.MarkdownService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.RequestAttributes;
@@ -41,17 +44,24 @@ public class ContentController {
      * List content at the specified path
      */
     @GetMapping("/content")
-    public ResponseEntity<List<ContentItemDto>> listContent(
-            @RequestParam(required = false, defaultValue = "/") String path) {
+    public ResponseEntity<ContentListResponse> listContent(
+            @RequestParam(required = false, defaultValue = "/") String directory) {
         
-        String normalizedPath = normalizePath(path);
+        String normalizedPath = normalizePath(directory);
+        logger.debug("Listing content for directory: {}", normalizedPath);
+        
         List<ContentItem> items = contentRepository.findChildren(normalizedPath);
         
         List<ContentItemDto> dtos = items.stream()
             .map(ContentItemDto::fromDomain)
             .collect(Collectors.toList());
         
-        return ResponseEntity.ok(dtos);
+        // Ensure the path ends with a slash for directories
+        String responsePath = normalizedPath.equals("/") ? "/" : normalizedPath + "/";
+        ContentListResponse response = ContentListResponse.of(dtos, responsePath);
+        
+        logger.debug("Returning {} items for path: {}", dtos.size(), responsePath);
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -61,14 +71,27 @@ public class ContentController {
      * Extracts the path from the request URL
      */
     private String extractPathFromRequest() {
-        // Get the full request URI and extract the part after /content/
         RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
         if (requestAttributes instanceof ServletRequestAttributes) {
             HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
             String requestURI = request.getRequestURI();
+            
+            // Remove context path if present
+            String contextPath = request.getContextPath();
+            if (contextPath != null && !contextPath.isEmpty() && requestURI.startsWith(contextPath)) {
+                requestURI = requestURI.substring(contextPath.length());
+            }
+            
+            // Remove /api if present (since controller is mapped to /api)
+            if (requestURI.startsWith("/api")) {
+                requestURI = requestURI.substring(4); // Remove "/api"
+            }
+            
+            // Extract path after /content/
             int contentIndex = requestURI.indexOf("/content/");
             if (contentIndex >= 0) {
-                return requestURI.substring(contentIndex + 8); // +8 to skip "/content/"
+                String path = requestURI.substring(contentIndex + 8); // +8 to skip "/content/"
+                return path.isEmpty() ? "/" : path;
             }
         }
         return "/";
@@ -80,13 +103,14 @@ public class ContentController {
         
         String path = extractPathFromRequest();
         String normalizedPath = normalizePath(path);
+        logger.debug("Requested path: '{}', normalized: '{}'", path, normalizedPath);
 
         ContentItem item = contentRepository.findByPath(normalizedPath)
             .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
         
-        // Handle markdown files
-        if (normalizedPath.toLowerCase().endsWith(".md")) {
-            try {
+        try {
+            // Handle markdown files
+            if (normalizedPath.toLowerCase().endsWith(".md")) {
                 String content = contentRepository.getContent(normalizedPath);
                 Map<String, Object> processed = markdownService.processMarkdown(content);
                 
@@ -96,7 +120,7 @@ public class ContentController {
                     fileName = fileName.substring(0, fileName.length() - 3);
                 }
                 
-                // Create response map to match the exact structure of the JS backend
+                // Create response map to match the expected structure
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("headings", processed.get("headings"));
                 response.put("markdown", processed.get("markdown"));
@@ -112,44 +136,37 @@ public class ContentController {
                 response.put("name", fileName);
                 response.put("path", normalizedPath);
                 
-                // Set response headers to match the JS backend
-                return ResponseEntity.ok()
-                    .header("Access-Control-Allow-Origin", "*")
-                    .header("Access-Control-Allow-Credentials", "true")
-                    .header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
-                    .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Pragma, Expires")
-                    .header("Access-Control-Expose-Headers", "Content-Length, Content-Type, Cache-Control, Expires")
-                    .header("Access-Control-Max-Age", "86400")
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                    .body(response);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to read markdown content", e);
-            }
-        }
-        
-        // Handle non-markdown files and directories
-        ContentItemDto dto;
-        
-        try {
-            // Handle files
-            if ("file".equals(item.type())) {
-                String content = contentRepository.getContent(normalizedPath);
-                dto = ContentItemDto.withContent(item, content, null);
-            } 
-            // Handle directories
-            else {
-                List<ContentItem> children = recursive ? 
-                    contentRepository.findDescendants(normalizedPath) : 
-                    contentRepository.findChildren(normalizedPath);
-                    
-                List<ContentItemDto> childDtos = children.stream()
-                    .map(ContentItemDto::fromDomain)
-                    .collect(Collectors.toList());
-                    
-                dto = ContentItemDto.withChildren(item, childDtos);
+                logger.debug("Returning markdown content for: {}", normalizedPath);
+                return ResponseEntity.ok(response);
             }
             
-            return ResponseEntity.ok(dto);
+            // Handle non-markdown files
+            if ("file".equals(item.type())) {
+                String content = contentRepository.getContent(normalizedPath);
+                ContentItemDto dto = ContentItemDto.withContent(item, content, null);
+                logger.debug("Returning file content for: {}", normalizedPath);
+                return ResponseEntity.ok(dto);
+            } 
+            
+            // Handle directories - always return a ContentListResponse for directories
+            List<ContentItem> children = recursive ? 
+                contentRepository.findDescendants(normalizedPath) : 
+                contentRepository.findChildren(normalizedPath);
+                
+            // Convert to DTOs with the normalized path as base for relative paths
+            List<ContentItemDto> childDtos = children.stream()
+                .map(child -> ContentItemDto.fromDomain(child, normalizedPath))
+                .collect(Collectors.toList());
+            
+            // Create the response with the directory listing
+            ContentListResponse response = ContentListResponse.of(childDtos, normalizedPath);
+            logger.debug("Returning directory listing for: {} ({} items)", normalizedPath, childDtos.size());
+            
+            // Set content type with UTF-8 encoding
+            return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.CONTENT_ENCODING, "UTF-8")
+                .body(response);
             
         } catch (IOException e) {
             logger.error("Error reading content for path {}: {}", normalizedPath, e.getMessage(), e);
@@ -164,6 +181,8 @@ public class ContentController {
     public ResponseEntity<ContentItemDto> saveContent(@RequestBody String content) {
         String path = extractPathFromRequest();
         String normalizedPath = normalizePath(path);
+        
+        logger.debug("Saving content to: {}", normalizedPath);
 
         // Create or update the file
         ContentItem savedItem;
@@ -172,19 +191,23 @@ public class ContentController {
             String parentPath = getParentPath(normalizedPath);
             if (!parentPath.isEmpty() && !"/".equals(parentPath) && 
                 !contentRepository.findByPath(parentPath).isPresent()) {
+                logger.debug("Creating parent directory: {}", parentPath);
                 // Create parent directories if they don't exist
                 contentRepository.saveContent(parentPath, "");
             }
             
             // Now save the file
+            logger.debug("Saving content to: {}", normalizedPath);
             savedItem = contentRepository.saveContent(normalizedPath, content);
+            logger.info("Successfully saved content to: {}", normalizedPath);
+            
+            ContentItemDto dto = ContentItemDto.withContent(savedItem, content, null);
+            return ResponseEntity.ok(dto);
+            
         } catch (Exception e) {
+            logger.error("Failed to save content to {}: {}", normalizedPath, e.getMessage(), e);
             throw new RuntimeException("Failed to save content: " + e.getMessage(), e);
         }
-        
-        ContentItemDto dto = ContentItemDto.withContent(savedItem, content, null);
-        
-        return ResponseEntity.ok(dto);
     }
 
     /**
@@ -244,6 +267,7 @@ public class ContentController {
 
     /**
      * Normalizes a path to a consistent format
+     * - Removes duplicate slashes
      * - Ensures path starts with a single slash
      * - Removes trailing slashes (except for root)
      * - Handles null or empty paths
@@ -255,15 +279,22 @@ public class ContentController {
         if (path == null || path.trim().isEmpty() || "/".equals(path.trim())) {
             return "/";
         }
-        // Ensure path starts with a single slash and doesn't end with one (except root)
-        String normalized = path.trim();
+        
+        // Normalize the path
+        String normalized = path.trim()
+            .replaceAll("/+", "/")  // Replace multiple slashes with a single slash
+            .replaceAll("^/|/$", ""); // Remove leading and trailing slashes
+            
+        // Handle root path
+        if (normalized.isEmpty()) {
+            return "/";
+        }
+        
+        // Ensure path starts with a single slash
         if (!normalized.startsWith("/")) {
             normalized = "/" + normalized;
         }
-        // Remove trailing slash unless it's the root
-        if (normalized.length() > 1 && normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
+        
         return normalized;
     }
 
