@@ -28,8 +28,8 @@ RESTful API server for TaciaDocs, built with Spring Boot. This is the Java backe
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-org/tacia-docs.git
-   cd tacia-docs/backend-java
+   git clone https://github.com/vebulos/tacia-docs-backend-java.git
+   cd tacia-docs-backend-java
    ```
 
 2. **Build the application**
@@ -52,13 +52,14 @@ This backend is designed to work with the TaciaDocs frontend. To run both togeth
 
 1. Start the Java backend:
    ```bash
-   cd backend-java
+   cd tacia-docs-backend-java
    mvn spring-boot:run
    ```
 
 2. In a separate terminal, start the frontend:
    ```bash
-   cd ../frontend
+   git clone https://github.com/vebulos/tacia-docs.git
+   cd tacia-docs
    npm start
    ```
 
@@ -112,10 +113,10 @@ logging:
 mvn clean package
 
 # Build Docker image
-docker build -t taciadocs/backend-java .
+docker build -t tacia-docs-backend-java .
 
 # Run the container
-docker run -p 8080:8080 taciadocs/backend-java
+docker run -p 8080:8080 tacia-docs-backend-java
 ```
 
 ## 🧪 Testing
@@ -130,7 +131,7 @@ mvn test
 ### Project Structure
 
 ```
-backend-java/
+tacia-docs-backend-java/
 ├── src/
 │   ├── main/
 │   │   ├── java/com/example/backend/
