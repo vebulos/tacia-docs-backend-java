@@ -1,6 +1,7 @@
 package net.tacia.backend.api.controller;
 
 import net.tacia.backend.api.dto.ContentItemDto;
+import net.tacia.backend.api.dto.StructureResponseDto;
 import net.tacia.backend.api.exception.ContentNotFoundException;
 import net.tacia.backend.model.ContentItem;
 import net.tacia.backend.repository.ContentRepository;
@@ -28,87 +29,61 @@ public class StructureController {
     
     /**
      * Get content structure at the specified path
+     * @param path The path to get structure for (path parameter)
+     * @return The content item with its children if it's a directory
      */
-    @GetMapping
-    public ResponseEntity<ContentItemDto> getStructure(
-            @RequestParam String path) {
+    @GetMapping("/{*path}")
+    public ResponseEntity<StructureResponseDto> getStructure(
+            @PathVariable(value = "path", required = false) String path) {
         
         String normalizedPath = normalizePath(path);
+        logger.debug("Getting structure for path: {}", normalizedPath);
+        
         ContentItem item = contentRepository.findByPath(normalizedPath)
             .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
         
-        ContentItemDto dto = ContentItemDto.fromDomain(item);
-        
-        // For directories, include children
-        if ("directory".equals(item.type())) {
-            List<ContentItem> children = contentRepository.findChildren(normalizedPath);
-            List<ContentItemDto> childDtos = children.stream()
-                .map(ContentItemDto::fromDomain)
-                .collect(Collectors.toList());
-            dto = ContentItemDto.withChildren(item, childDtos);
+        if (!"directory".equals(item.type())) {
+            // If the path is a file, return a 400 Bad Request
+            throw new ContentNotFoundException("Path is not a directory: " + normalizedPath);
         }
         
-        return ResponseEntity.ok(dto);
-    }
-    
-    /**
-     * Get content structure recursively from the specified path
-     */
-    @GetMapping("/recursive")
-    public ResponseEntity<ContentItemDto> getStructureRecursive(
-            @RequestParam String path) {
-        
-        String normalizedPath = normalizePath(path);
-        ContentItem item = contentRepository.findByPath(normalizedPath)
-            .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
-        
-        // For files, return just the item
-        if ("file".equals(item.type())) {
-            return ResponseEntity.ok(ContentItemDto.fromDomain(item));
-        }
-        
-        // For directories, build the full tree
-        ContentItemDto dto = buildDirectoryTree(item, normalizedPath);
-        return ResponseEntity.ok(dto);
-    }
-    
-    /**
-     * Builds a directory tree recursively
-     */
-    private ContentItemDto buildDirectoryTree(ContentItem directory, String basePath) {
-        List<ContentItem> children = contentRepository.findChildren(basePath);
-        
+        // Get all children of the directory
+        List<ContentItem> children = contentRepository.findChildren(normalizedPath);
         List<ContentItemDto> childDtos = children.stream()
-            .map(child -> {
-                String childPath = basePath + "/" + child.name();
-                return "directory".equals(child.type()) ? 
-                    buildDirectoryTree(child, childPath) : 
-                    ContentItemDto.fromDomain(child);
-            })
+            .map(ContentItemDto::fromDomain)
             .collect(Collectors.toList());
             
-        return ContentItemDto.withChildren(directory, childDtos);
+        // Create response with the directory path and its children
+        StructureResponseDto response = StructureResponseDto.of(
+            normalizedPath.equals("/") ? "" : normalizedPath,
+            childDtos
+        );
+        
+        return ResponseEntity.ok(response);
     }
     
     /**
-     * Normalizes the given path
+     * Get content structure at the root path
+     */
+    @GetMapping
+    public ResponseEntity<StructureResponseDto> getRootStructure() {
+        return getStructure("");
+    }
+    
+    /**
+     * Normalize the path by ensuring it starts with a slash and doesn't end with one
      */
     private String normalizePath(String path) {
-        if (path == null || path.trim().isEmpty()) {
+        if (path == null || path.isEmpty() || "/".equals(path)) {
             return "/";
         }
         
-        // Remove leading/trailing whitespace and slashes
-        path = path.trim();
+        // Remove leading and trailing slashes
+        path = path.replaceAll("^/|/$", "");
         
-        // Ensure path starts with a single slash
+        // Ensure it starts with a single slash
         if (!path.startsWith("/")) {
             path = "/" + path;
-        }
-        
-        // Remove trailing slash unless it's the root
-        if (path.length() > 1 && path.endsWith("/")) {
-            path = path.substring(0, path.length() - 1);
         }
         
         return path;

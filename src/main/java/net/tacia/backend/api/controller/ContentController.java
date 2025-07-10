@@ -44,27 +44,28 @@ public class ContentController {
     }
 
     /**
-     * List content at the specified path
+     * Get raw file content at the specified path
      */
-    @GetMapping("/content")
-    public ResponseEntity<ContentListResponse> listContent(
-            @RequestParam(required = false, defaultValue = "/") String directory) {
+    @GetMapping("/file-content/{*path}")
+    public ResponseEntity<String> getFileContent(@PathVariable String path) {
+        String normalizedPath = normalizePath(path);
+        logger.debug("Getting raw content for path: {}", normalizedPath);
         
-        String normalizedPath = normalizePath(directory);
-        logger.debug("Listing content for directory: {}", normalizedPath);
+        // This method handles raw file content retrieval
+        ContentItem item = contentRepository.findByPath(normalizedPath)
+            .orElseThrow(() -> new ContentNotFoundException("Content not found: " + normalizedPath));
+            
+        if ("directory".equals(item.type())) {
+            throw new ContentNotFoundException("Cannot get content of a directory: " + normalizedPath);
+        }
         
-        List<ContentItem> items = contentRepository.findChildren(normalizedPath);
+        // Get the file content using the repository
+        String content = contentRepository.getContent(normalizedPath)
+            .orElseThrow(() -> new ContentNotFoundException("Content not found for path: " + normalizedPath));
         
-        List<ContentItemDto> dtos = items.stream()
-            .map(ContentItemDto::fromDomain)
-            .collect(Collectors.toList());
-        
-        // Ensure the path ends with a slash for directories
-        String responsePath = normalizedPath.equals("/") ? "/" : normalizedPath + "/";
-        ContentListResponse response = ContentListResponse.of(dtos, responsePath);
-        
-        logger.debug("Returning {} items for path: {}", dtos.size(), responsePath);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok()
+            .contentType(MediaType.TEXT_PLAIN)
+            .body(content);
     }
 
     /**
@@ -174,25 +175,20 @@ public class ContentController {
                 
                 // Create response with content
                 Map<String, Object> response = new LinkedHashMap<>();
-                response.put("type", "file");
-                response.put("name", item.name());
+                response.put("name", item.name().replace(".md", ""));
                 response.put("path", item.path());
-                response.put("content", processed.get("html"));
-                response.put("lastModified", item.lastModified().toString());
-                response.put("title", title);
-                response.put("size", item.size());
                 
-                // Add additional markdown-specific fields
-                response.put("headings", processed.get("headings"));
+                // Add markdown content and metadata
                 response.put("markdown", processed.get("markdown"));
+                response.put("headings", processed.get("headings"));
                 
-                // Add metadata if available
+                // Add metadata
                 if (processed.containsKey("metadata")) {
                     ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
-                    Map<String, Object> metadataMap = new LinkedHashMap<>();
-                    metadataMap.put("title", metadata.title());
-                    metadataMap.put("tags", metadata.tags());
-                    response.put("metadata", metadataMap);
+                    response.put("metadata", Map.of(
+                        "title", metadata.title(),
+                        "tags", metadata.tags()
+                    ));
                 }
                 
                 return ResponseEntity.ok()

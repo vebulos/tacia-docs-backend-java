@@ -28,18 +28,27 @@ public class FirstDocumentController {
     }
     
     /**
-     * Find the first markdown document in the specified directory
-     * 
-     * @param directory The directory to search in (optional, defaults to root)
-     * @return The path to the first markdown document found
+     * Handle root path
      */
     @GetMapping
+    public ResponseEntity<?> getFirstDocumentRoot() {
+        return getFirstDocument(null);
+    }
+    
+    /**
+     * Find the first markdown document in the specified directory
+     * 
+     * @param directory The directory to search in (path parameter)
+     * @return The path to the first markdown document found
+     */
+    @GetMapping("/{*directory}")
     public ResponseEntity<?> getFirstDocument(
-            @RequestParam(required = false, defaultValue = "") String directory) {
+            @PathVariable(value = "directory", required = false) String directory) {
         
         logger.info("Finding first document in directory: '{}'", directory);
         
         try {
+            // Normalize the path (remove leading/trailing slashes)
             String normalizedDir = normalizeDirectoryPath(directory);
             logger.debug("Normalized directory path: '{}'", normalizedDir);
             

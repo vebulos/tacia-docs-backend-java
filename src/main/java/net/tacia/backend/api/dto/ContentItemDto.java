@@ -18,7 +18,7 @@ public record ContentItemDto(
     @JsonProperty("name") String name,                // Name of the file or directory
     @JsonProperty("path") String path,                // Full path of the item from content root
     @JsonProperty("type") String type,                // 'file' or 'directory'
-    @JsonIgnore Long size,                             // Size in bytes (exposed via getter)
+    @JsonIgnore long size,                             // Size in bytes (exposed via getter)
     @JsonIgnore Instant lastModified,                  // Last modification timestamp (formatted via getter)
     @JsonIgnore String content,                        // File content (only for files, not in listings)
     @JsonIgnore List<ContentItemDto> children,         // Child items (only for directories)
@@ -30,36 +30,7 @@ public record ContentItemDto(
         return "directory".equals(type);
     }
     
-    @JsonProperty("title")
-    public String getTitle() {
-        // For directories, return null to match JS backend
-        if (isDirectory()) {
-            return null;
-        }
-        
-        // If we have metadata with a title, use that first
-        if (metadata != null && metadata.title() != null && !metadata.title().isEmpty()) {
-            return metadata.title();
-        }
-        
-        // For Markdown files, try to get title from content
-        if (type != null && type.equals("file") && content != null) {
-            if (content.startsWith("# ")) {
-                // Extract first line after # for title
-                int endOfFirstLine = content.indexOf("\n");
-                if (endOfFirstLine > 2) {
-                    return content.substring(2, endOfFirstLine).trim();
-                }
-            }
-            // Fallback to filename without extension for Markdown files
-            if (name.endsWith(".md")) {
-                return name.substring(0, name.length() - 3);
-            }
-        }
-        
-        // For non-markdown files, return null to match JS backend
-        return null;
-    }
+    // Title field has been removed to match JS backend response format
     
     @JsonProperty("lastModified")
     public String getLastModifiedFormatted() {
@@ -72,7 +43,7 @@ public record ContentItemDto(
     
     @JsonProperty("size")
     public long getSizeOrZero() {
-        return size != null ? size : 0L;
+        return size;  // size est maintenant un long primitif, pas besoin de vérifier null
     }
     /**
      * Creates a DTO from a domain model with full path
@@ -93,21 +64,26 @@ public record ContentItemDto(
         
         // For markdown files, set the title from the filename as fallback
         ContentMetadataDto metadata = null;
+        String title = null;
         if ("file".equals(item.type()) && item.name().toLowerCase().endsWith(".md")) {
-            String title = item.name().substring(0, item.name().length() - 3); // Remove .md
+            // Only set title for markdown files to match JS backend
+            title = item.name().substring(0, item.name().length() - 3); // Remove .md
             metadata = new ContentMetadataDto(title, List.of());
         }
         
-        return new ContentItemDto(
+        // Create the DTO with all fields
+        ContentItemDto dto = new ContentItemDto(
             item.name(),
             fullPath,
             item.type(),
-            "file".equals(item.type()) ? item.size() : 0,
+            item.size(),
             item.lastModified(),
             null,  // Content is loaded separately
             null,  // Children are loaded separately
             metadata
         );
+        
+        return dto;
     }
     
     /**
@@ -138,9 +114,15 @@ public record ContentItemDto(
      * Creates a DTO with child items (for directories)
      */
     public static ContentItemDto withChildren(ContentItem item, List<ContentItemDto> children) {
+        // For directories, use the full path as the path, not just the name
+        String path = item.path();
+        if (path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        
         return new ContentItemDto(
             item.name(),
-            item.name(),  // Just the name for directory listings
+            path,
             item.type(),
             0L,  // Directories have size 0
             item.lastModified(),
