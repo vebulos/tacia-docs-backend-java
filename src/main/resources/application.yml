@@ -13,7 +13,7 @@ spring:
 
 # Server configuration
 server:
-  port: 8080
+  port: 7070
   servlet:
     context-path: /
     session:
