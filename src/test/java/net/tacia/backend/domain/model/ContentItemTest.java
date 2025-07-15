@@ -18,7 +18,7 @@ class ContentItemTest {
         );
 
         assertEquals("docs", dir.name());
-        assertEquals("/docs/", dir.path());  // Should end with slash for directories
+        assertEquals("/docs", dir.path());  // Should NOT end with slash for directories
         assertEquals("directory", dir.type());
         assertEquals(0, dir.size());
         assertEquals(now, dir.lastModified());
@@ -42,10 +42,12 @@ class ContentItemTest {
     }
     
     @Test
-    void ensureDirectoryPathEndsWithSlash() {
+    void directoryPath_shouldBePreservedAsIs() {
+        // A path without a trailing slash should be preserved.
         ContentItem dir1 = ContentItem.directory("test", "/test", Instant.now());
-        assertEquals("/test/", dir1.path());
+        assertEquals("/test", dir1.path());
         
+        // A path with a trailing slash should also be preserved.
         ContentItem dir2 = ContentItem.directory("test", "/test/", Instant.now());
         assertEquals("/test/", dir2.path());
     }

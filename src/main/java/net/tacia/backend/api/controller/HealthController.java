@@ -21,7 +21,7 @@ import java.util.Map;
  * Controller for health checks and application state management
  */
 @RestController
-@RequestMapping("/api/health")
+@RequestMapping(value = {"/health", "/api/health"})
 public class HealthController {
     
     private static final Logger logger = LoggerFactory.getLogger(HealthController.class);
