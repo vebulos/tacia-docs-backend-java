@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -73,16 +74,20 @@ class FileSystemContentRepositoryTest {
         // Given
         Instant now = Instant.now();
         ContentItem file1 = ContentItem.file(
-            "file1.txt",
-            "/dir1/file1.txt",
+            "file1.md",
+            "/dir1/file1.md",
             0,
-            now
+            now,
+            null,
+            Map.of()
         );
         ContentItem file2 = ContentItem.file(
-            "file2.txt",
-            "/dir1/file2.txt",
+            "file2.md",
+            "/dir1/file2.md",
             0,
-            now
+            now,
+            null,
+            Map.of()
         );
 
         // When
@@ -92,8 +97,8 @@ class FileSystemContentRepositoryTest {
 
         // Then
         assertEquals(2, children.size());
-        assertTrue(children.stream().anyMatch(i -> i.name().equals("file1.txt")));
-        assertTrue(children.stream().anyMatch(i -> i.name().equals("file2.txt")));
+        assertTrue(children.stream().anyMatch(i -> i.name().equals("file1.md")), "File1 not found");
+        assertTrue(children.stream().anyMatch(i -> i.name().equals("file2.md")), "File2 not found");
     }
 
     @Test

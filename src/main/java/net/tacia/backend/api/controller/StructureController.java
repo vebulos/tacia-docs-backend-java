@@ -10,7 +10,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -49,9 +51,35 @@ public class StructureController {
         
         // Get all children of the directory
         List<ContentItem> children = contentRepository.findChildren(normalizedPath);
-        List<ContentItemDto> childDtos = children.stream()
+        
+        // Sort children: first by order (if present), then by type (directories first), then by name
+        List<ContentItem> sortedChildren = children.stream()
+            .sorted((a, b) -> {
+                // First compare by order (nulls last)
+                if (a.order() != null && b.order() != null) {
+                    return Integer.compare(a.order(), b.order());
+                } else if (a.order() != null) {
+                    return -1;
+                } else if (b.order() != null) {
+                    return 1;
+                }
+                
+                // Then by type (directories first)
+                if (!a.type().equals(b.type())) {
+                    return "directory".equals(a.type()) ? -1 : 1;
+                }
+                
+                // Finally by name (case insensitive)
+                return a.name().compareToIgnoreCase(b.name());
+            })
+            .collect(Collectors.toList());
+            
+        // Convert to DTOs
+        List<ContentItemDto> childDtos = sortedChildren.stream()
             .map(ContentItemDto::fromDomain)
             .collect(Collectors.toList());
+            
+        logger.debug("Returning {} items for path: {}", childDtos.size(), normalizedPath);
             
         // Create response with the directory path and its children
         StructureResponseDto response = StructureResponseDto.of(

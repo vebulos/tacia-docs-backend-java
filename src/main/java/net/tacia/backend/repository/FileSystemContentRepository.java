@@ -1,6 +1,7 @@
 package net.tacia.backend.repository;
 
 import net.tacia.backend.model.ContentItem;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -8,9 +9,14 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.*;
 import java.nio.file.StandardOpenOption;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.HashMap;
 
 public class FileSystemContentRepository implements ContentRepository {
-
+    private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("^---\\s*\\n([\\s\\S]*?)\\n---");
+    private static final Set<String> MARKDOWN_EXTENSIONS = Set.of(".md", ".markdown");
+    private final Yaml yaml = new Yaml();
     private final Path contentRoot;
 
     public FileSystemContentRepository(Path contentRoot) {
@@ -27,20 +33,26 @@ public class FileSystemContentRepository implements ContentRepository {
             }
 
             BasicFileAttributes attrs = Files.readAttributes(fullPath, BasicFileAttributes.class);
-            String name = getFileName(fullPath);
-            String type = Files.isDirectory(fullPath) ? "directory" : "file";
-            long size = attrs.size();
-            Instant lastModified = attrs.lastModifiedTime().toInstant();
-
-            // Use the normalized path that matches how we store it
-            String normalizedPath = "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/");
             
-            // For directories, ensure path doesn't end with a slash
-            if (normalizedPath.endsWith("/")) {
-                normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 1);
+            // Create basic content item with empty metadata
+            ContentItem item = new ContentItem(
+                getFileName(fullPath),
+                Files.isDirectory(fullPath) ? "directory" : "file",
+                "/" + getRelativePath(fullPath) + (Files.isDirectory(fullPath) ? "/" : ""),
+                attrs.size(),
+                attrs.lastModifiedTime().toInstant(),
+                null,  // order will be set by load*Metadata
+                new HashMap<>()  // empty metadata
+            );
+            
+            // Load metadata if available
+            if (Files.isDirectory(fullPath)) {
+                item = loadDirectoryMetadata(fullPath, item);
+            } else if (isMarkdownFile(fullPath.getFileName().toString())) {
+                item = loadMarkdownMetadata(fullPath, item);
             }
-
-            return Optional.of(new ContentItem(name, type, normalizedPath, size, lastModified));
+            
+            return Optional.of(item);
         } catch (IOException e) {
             throw new RuntimeException("Failed to read file attributes: " + path, e);
         }
@@ -66,7 +78,7 @@ public class FileSystemContentRepository implements ContentRepository {
                         long size = attrs.size();
                         Instant lastModified = attrs.lastModifiedTime().toInstant();
 
-                        descendants.add(new ContentItem(name, type, relativePath, size, lastModified));
+                        descendants.add(new ContentItem(name, type, relativePath, size, lastModified, null, new HashMap<>()));
                     } catch (Exception e) {
                         // Skip files we can't process
                     }
@@ -83,7 +95,7 @@ public class FileSystemContentRepository implements ContentRepository {
                             long size = 0; // Directories don't have size
                             Instant lastModified = attrs.lastModifiedTime().toInstant();
 
-                            descendants.add(new ContentItem(name, type, relativePath, size, lastModified));
+                            descendants.add(new ContentItem(name, type, relativePath, size, lastModified, null, new HashMap<>()));
                         } catch (Exception e) {
                             // Skip directories we can't process
                         }
@@ -107,31 +119,94 @@ public class FileSystemContentRepository implements ContentRepository {
             return children;
         }
 
-        // Normalize the parent path
-        String parentPath = path.endsWith("/") ? path : path + "/";
+        // Normalize the parent path - ensure it doesn't end with a slash
+        String parentPath = path;
+        if (parentPath.endsWith("/")) {
+            parentPath = parentPath.substring(0, parentPath.length() - 1);
+        }
+        if (parentPath.isEmpty()) {
+            parentPath = "/";
+        } else if (!parentPath.startsWith("/")) {
+            parentPath = "/" + parentPath;
+        }
 
         try (var stream = Files.list(dirPath)) {
-            stream.sorted(Comparator.comparing(p -> p.getFileName().toString()))
-                .forEach(childPath -> {
-                    try {
-                        BasicFileAttributes attrs = Files.readAttributes(childPath, BasicFileAttributes.class);
-                        String name = getFileName(childPath);
-                        String type = Files.isDirectory(childPath) ? "directory" : "file";
-                        String childPathStr = parentPath + name;
-                        
-                        // Ensure directory paths end with a slash
-                        if (type.equals("directory") && !childPathStr.endsWith("/")) {
-                            childPathStr += "/";
-                        }
-                        
-                        long size = attrs.size();
-                        Instant lastModified = attrs.lastModifiedTime().toInstant();
-
-                        children.add(new ContentItem(name, type, childPathStr, size, lastModified));
-                    } catch (IOException e) {
-                        throw new RuntimeException("Failed to read child: " + childPath, e);
+            for (Path childPath : stream.collect(Collectors.toList())) {
+                try {
+                    String name = childPath.getFileName().toString();
+                    boolean isDirectory = Files.isDirectory(childPath);
+                    
+                    // Skip hidden files except .metadata
+                    if (name.startsWith(".") && !name.equals(".metadata")) {
+                        continue;
                     }
-                });
+                    
+                    // Skip non-markdown files
+                    if (!isDirectory && !isMarkdownFile(name)) {
+                        continue;
+                    }
+                    
+                    BasicFileAttributes attrs = Files.readAttributes(childPath, BasicFileAttributes.class);
+                    
+                    // Build the full path for the child
+                    String childPathStr = parentPath.equals("/") 
+                        ? "/" + name 
+                        : parentPath + "/" + name;
+                    
+                    // Ensure directory paths end with a slash
+                    if (isDirectory && !childPathStr.endsWith("/")) {
+                        childPathStr += "/";
+                    }
+                    
+                    // Create base content item with empty metadata
+                    ContentItem item = new ContentItem(
+                        name,
+                        isDirectory ? "directory" : "file",
+                        childPathStr,
+                        attrs.size(),
+                        attrs.lastModifiedTime().toInstant(),
+                        null,  // order will be set by load*Metadata
+                        new HashMap<>()  // empty metadata
+                    );
+                    
+                    // Load metadata if available
+                    if (isDirectory) {
+                        item = loadDirectoryMetadata(childPath, item);
+                    } else if (isMarkdownFile(name)) {
+                        item = loadMarkdownMetadata(childPath, item);
+                    }
+                    
+                    // Skip .metadata files from the result
+                    if (!name.equals(".metadata")) {
+                        children.add(item);
+                    }
+                } catch (IOException e) {
+                    // Skip files we can't read
+                    continue;
+                }
+            }
+            
+            // Sort items by order (nulls last), then by type (directories first), then by name
+            children.sort((a, b) -> {
+                // First compare by order (nulls last)
+                if (a.order() != null && b.order() != null) {
+                    int orderCompare = Integer.compare(a.order(), b.order());
+                    if (orderCompare != 0) return orderCompare;
+                } else if (a.order() != null) {
+                    return -1;
+                } else if (b.order() != null) {
+                    return 1;
+                }
+                
+                // Then by type (directories first)
+                if (!a.type().equals(b.type())) {
+                    return a.type().equals("directory") ? -1 : 1;
+                }
+                
+                // Finally by name (case insensitive)
+                return a.name().compareToIgnoreCase(b.name());
+            });
+                
         } catch (IOException e) {
             throw new RuntimeException("Failed to list directory: " + path, e);
         }
@@ -153,7 +228,9 @@ public class FileSystemContentRepository implements ContentRepository {
                 item.type(),
                 item.path(),
                 attrs.size(),
-                attrs.lastModifiedTime().toInstant()
+                attrs.lastModifiedTime().toInstant(),
+                item.order(),
+                item.metadata() != null ? new HashMap<>(item.metadata()) : new HashMap<>()
             );
         } catch (IOException e) {
             throw new RuntimeException("Failed to save content: " + item.path(), e);
@@ -245,7 +322,15 @@ public class FileSystemContentRepository implements ContentRepository {
         long size = attrs.size();
         Instant lastModified = attrs.lastModifiedTime().toInstant();
         
-        return new ContentItem(name, type, "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/"), size, lastModified);
+        return new ContentItem(
+            name, 
+            type, 
+            "/" + contentRoot.relativize(fullPath).toString().replace("\\", "/"), 
+            size, 
+            lastModified,
+            null,  // order not available in this context
+            new HashMap<>()  // empty metadata
+        );
     }
 
     private Path resolvePath(String path) {
@@ -305,5 +390,171 @@ public class FileSystemContentRepository implements ContentRepository {
         Path relativePath = contentRoot.relativize(path.normalize().toAbsolutePath());
         // Replace backslashes with forward slashes for consistency
         return relativePath.toString().replace("\\", "/");
+    }
+    
+    /**
+     * Checks if a file is a markdown file based on its extension.
+     */
+    private boolean isMarkdownFile(String filename) {
+        if (filename == null) {
+            return false;
+        }
+        String lowerName = filename.toLowerCase();
+        return MARKDOWN_EXTENSIONS.stream().anyMatch(lowerName::endsWith);
+    }
+    
+    /**
+     * Loads metadata from a directory's .metadata file if it exists.
+     */
+    private ContentItem loadDirectoryMetadata(Path dirPath, ContentItem item) {
+        Path metadataPath = dirPath.resolve(".metadata");
+        if (!Files.exists(metadataPath)) {
+            return item;
+        }
+        
+        try {
+            String content = Files.readString(metadataPath);
+            Map<String, Object> metadata = parseMetadata(content);
+            return applyMetadataToItem(item, metadata);
+        } catch (IOException e) {
+            // If we can't read the metadata file, just return the original item
+            return item;
+        }
+    }
+    
+    /**
+     * Loads metadata from a markdown file's frontmatter.
+     */
+    private ContentItem loadMarkdownMetadata(Path filePath, ContentItem item) {
+        try {
+            String content = Files.readString(filePath);
+            var matcher = FRONTMATTER_PATTERN.matcher(content);
+            
+            if (matcher.find()) {
+                String yamlContent = matcher.group(1);
+                Map<String, Object> metadata = parseMetadata(yamlContent);
+                return applyMetadataToItem(item, metadata);
+            }
+            return item;
+        } catch (IOException e) {
+            // If we can't read the file, just return the original item
+            return item;
+        }
+    }
+    
+    /**
+     * Parses YAML metadata content into a Map.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseMetadata(String content) {
+        try {
+            // Try to parse as YAML first
+            Object parsed = yaml.load(content);
+            if (parsed instanceof Map) {
+                return (Map<String, Object>) parsed;
+            }
+            
+            // Fallback to simple key:value parsing if YAML parsing fails
+            return parseSimpleKeyValue(content);
+        } catch (Exception e) {
+            // If YAML parsing fails, fall back to simple key:value parsing
+            return parseSimpleKeyValue(content);
+        }
+    }
+    
+    /**
+     * Simple key:value parser as a fallback when YAML parsing fails.
+     */
+    private Map<String, Object> parseSimpleKeyValue(String content) {
+        Map<String, Object> result = new HashMap<>();
+        if (content == null || content.trim().isEmpty()) {
+            return result;
+        }
+        
+        String[] lines = content.split("\n");
+        for (String line : lines) {
+            line = line.trim();
+            // Skip empty lines and comments
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            
+            // Match key: value pattern
+            int colonIndex = line.indexOf(':');
+            if (colonIndex > 0) {
+                String key = line.substring(0, colonIndex).trim();
+                String value = line.substring(colonIndex + 1).trim();
+                
+                // Remove surrounding quotes if present
+                if ((value.startsWith("\"") && value.endsWith("\"")) || 
+                    (value.startsWith("'") && value.endsWith("'"))) {
+                    value = value.substring(1, value.length() - 1);
+                }
+                
+                // Try to parse values appropriately
+                Object parsedValue = value;
+                if ("true".equalsIgnoreCase(value)) {
+                    parsedValue = true;
+                } else if ("false".equalsIgnoreCase(value)) {
+                    parsedValue = false;
+                } else if ("null".equalsIgnoreCase(value) || value.isEmpty()) {
+                    parsedValue = null;
+                } else {
+                    try {
+                        // Try to parse as number
+                        if (value.contains(".")) {
+                            parsedValue = Double.parseDouble(value);
+                        } else {
+                            parsedValue = Long.parseLong(value);
+                        }
+                    } catch (NumberFormatException e) {
+                        // Not a number, keep as string
+                    }
+                }
+                
+                result.put(key, parsedValue);
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Applies metadata to a content item, setting order and other metadata fields.
+     */
+    private ContentItem applyMetadataToItem(ContentItem item, Map<String, Object> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return item;
+        }
+        
+        // Extract order if present
+        Integer order = null;
+        if (metadata.containsKey("order")) {
+            Object orderObj = metadata.get("order");
+            if (orderObj instanceof Number) {
+                order = ((Number) orderObj).intValue();
+            } else if (orderObj instanceof String) {
+                try {
+                    order = Integer.parseInt((String) orderObj);
+                } catch (NumberFormatException e) {
+                    // Ignore invalid order values
+                }
+            }
+        }
+        
+        // Create a copy of metadata without special fields
+        Map<String, Object> filteredMetadata = new HashMap<>(metadata);
+        filteredMetadata.remove("order");
+        
+        // Apply updates
+        ContentItem updatedItem = item;
+        if (order != null) {
+            updatedItem = updatedItem.withOrder(order);
+        }
+        if (!filteredMetadata.isEmpty()) {
+            updatedItem = updatedItem.withMetadata(filteredMetadata);
+        }
+        
+        return updatedItem;
     }
 }

@@ -8,7 +8,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Data Transfer Object for content items (files and directories)
@@ -22,7 +24,8 @@ public record ContentItemDto(
     @JsonIgnore Instant lastModified,                  // Last modification timestamp (formatted via getter)
     @JsonIgnore String content,                        // File content (only for files, not in listings)
     @JsonIgnore List<ContentItemDto> children,         // Child items (only for directories)
-    @JsonIgnore ContentMetadataDto metadata            // Metadata extracted from content (for markdown files)
+    @JsonProperty("metadata") Map<String, Object> metadata,  // Metadata from .metadata or frontmatter
+    @JsonProperty("order") Integer order                    // Custom sort order
 ) {
     
     @JsonProperty("isDirectory")
@@ -49,30 +52,34 @@ public record ContentItemDto(
      * Creates a DTO from a domain model with full path
      */
     public static ContentItemDto fromDomain(ContentItem item, String basePath) {
-        // Use full path for the item
-        String fullPath = item.path();
+        // Create a copy of metadata to avoid modifying the original
+        Map<String, Object> metadata = item.metadata() != null ? 
+            new HashMap<>(item.metadata()) : new HashMap<>();
         
-        // Remove leading slash if present (to match JS backend)
-        if (fullPath.startsWith("/")) {
-            fullPath = fullPath.substring(1);
-        }
-        
-        // For directories, ensure the path does NOT end with a slash to match JS backend
-        if (fullPath.endsWith("/")) {
-            fullPath = fullPath.substring(0, fullPath.length() - 1);
-        }
-        
-        // For markdown files, set the title from the filename as fallback
-        ContentMetadataDto metadata = null;
-        String title = null;
+        // For markdown files, ensure title is set (from metadata or filename)
         if ("file".equals(item.type()) && item.name().toLowerCase().endsWith(".md")) {
-            // Only set title for markdown files to match JS backend
-            title = item.name().substring(0, item.name().length() - 3); // Remove .md
-            metadata = new ContentMetadataDto(title, List.of());
+            String title = (String) metadata.computeIfAbsent("title", 
+                k -> item.name().substring(0, item.name().length() - 3));
+            metadata.put("title", title);
         }
         
-        // Create the DTO with all fields
-        ContentItemDto dto = new ContentItemDto(
+        // Build the full path
+        String fullPath;
+        if (basePath != null) {
+            fullPath = (basePath.endsWith("/") ? basePath : basePath + "/") + item.name();
+        } else {
+            fullPath = item.path();
+            
+            // Remove leading/trailing slashes to match JS backend
+            if (fullPath.startsWith("/")) {
+                fullPath = fullPath.substring(1);
+            }
+            if (fullPath.endsWith("/")) {
+                fullPath = fullPath.substring(0, fullPath.length() - 1);
+            }
+        }
+            
+        return new ContentItemDto(
             item.name(),
             fullPath,
             item.type(),
@@ -80,10 +87,9 @@ public record ContentItemDto(
             item.lastModified(),
             null,  // Content is loaded separately
             null,  // Children are loaded separately
-            metadata
+            metadata,
+            item.order()
         );
-        
-        return dto;
     }
     
     /**
@@ -106,7 +112,8 @@ public record ContentItemDto(
             item.lastModified(),
             content,
             null,  // No children when loading content
-            metadata
+            item.metadata() != null ? new HashMap<>(item.metadata()) : null,
+            item.order()
         );
     }
     
@@ -128,7 +135,8 @@ public record ContentItemDto(
             item.lastModified(),
             null,  // No content for directories
             children,
-            null   // No metadata for directories
+            item.metadata() != null ? new HashMap<>(item.metadata()) : null,
+            item.order()
         );
     }
 }
