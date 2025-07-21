@@ -77,4 +77,4 @@ management:
 # Application specific properties
 app:
   content:
-    root-directory: ${CONTENT_ROOT:./content}  # Can be overridden by environment variable
+    root-directory: ${CONTENT_ROOT}  # Content root directory (required)

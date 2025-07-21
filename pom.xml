@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>de.mxc</groupId>
 	<artifactId>mxc-backend</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>1.0.0</version>
 	<name>mxc-backend</name>
 	<description>Backend for MXC application</description>
 
