@@ -21,6 +21,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +120,31 @@ public class ContentController {
         String normalizedPath = normalizePath(path);
         logger.debug("Requested path: '{}', normalized: '{}'", path, normalizedPath);
 
+        // If the path is empty, list the root directory
+        if (normalizedPath.isEmpty()) {
+            // Get root item
+            ContentItem rootItem = contentRepository.findByPath("").orElseThrow(
+                () -> new ContentNotFoundException("Root directory not found")
+            );
+            
+            // Get children of root
+            List<ContentItem> children = contentRepository.findChildren("");
+            
+            // Convert to DTOs
+            List<ContentItemDto> childDtos = children.stream()
+                .map(child -> ContentItemDto.fromDomain(child, ""))
+                .collect(Collectors.toList());
+                
+            // Create response with the requested path (which is already normalized)
+            ContentListResponse response = ContentListResponse.of(childDtos, "");
+            logger.debug("Returning root directory listing ({} items)", childDtos.size());
+            
+            return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.CONTENT_ENCODING, StandardCharsets.UTF_8.name())
+                .body(response);
+        }
+
         // For root path, ensure we don't have a leading slash
         String lookupPath = normalizedPath.isEmpty() ? "" : normalizedPath;
         
@@ -152,7 +178,9 @@ public class ContentController {
                 String title = null;
                 if (processed.containsKey("metadata")) {
                     ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
-                    title = metadata.title();
+                    Map<String, String> metadataMap = new HashMap<>();
+                    metadataMap.put("title", metadata.getTitle() != null ? metadata.getTitle() : "");
+                    title = metadataMap.get("title");
                 }
                 
                 // If no title in metadata, try to extract from content
@@ -185,10 +213,7 @@ public class ContentController {
                 // Add metadata
                 if (processed.containsKey("metadata")) {
                     ContentMetadataDto metadata = (ContentMetadataDto) processed.get("metadata");
-                    response.put("metadata", Map.of(
-                        "title", metadata.title(),
-                        "tags", metadata.tags()
-                    ));
+                    response.put("metadata", metadata.getProperties());
                 }
                 
                 return ResponseEntity.ok()

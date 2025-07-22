@@ -46,7 +46,7 @@ public record ContentItemDto(
     
     @JsonProperty("size")
     public long getSizeOrZero() {
-        return size;  // size est maintenant un long primitif, pas besoin de vérifier null
+        return size;  // size is now a primitive long, no need to check for null
     }
     /**
      * Creates a DTO from a domain model with full path

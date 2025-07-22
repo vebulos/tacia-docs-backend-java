@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Service for processing Markdown content and extracting metadata
@@ -18,8 +19,7 @@ public class MarkdownService {
         Pattern.DOTALL
     );
     
-    private static final Pattern TITLE_PATTERN = Pattern.compile("^title:\\s*['\"](.*?)['\"]\\s*$", Pattern.MULTILINE);
-    private static final Pattern TAGS_PATTERN = Pattern.compile("^tags:\\s*\\[(.*?)\\]$", Pattern.MULTILINE);
+    private static final Pattern FRONT_MATTER_LINE_PATTERN = Pattern.compile("^([a-zA-Z0-9_-]+):\\s*(.*)$", Pattern.MULTILINE);
     private static final Pattern HEADING_PATTERN = Pattern.compile("^#+\\s+(.+)$", Pattern.MULTILINE);
 
     /**
@@ -27,11 +27,8 @@ public class MarkdownService {
      */
     public Map<String, Object> processMarkdown(String markdown) {
         Map<String, Object> result = new HashMap<>();
-        
-        // Default values
+        ContentMetadataDto metadata = new ContentMetadataDto();
         String content = markdown;
-        String title = "";
-        List<String> tags = new ArrayList<>();
         List<String> headings = new ArrayList<>();
         
         // Extract front matter if present
@@ -40,22 +37,71 @@ public class MarkdownService {
             String frontMatter = frontMatterMatcher.group("frontmatter");
             content = frontMatterMatcher.group("content").trim();
             
-            // Extract title
-            Matcher titleMatcher = TITLE_PATTERN.matcher(frontMatter);
-            if (titleMatcher.find()) {
-                title = titleMatcher.group(1).trim();
+            // Parse all front matter properties
+            String[] lines = frontMatter.split("\\r?\\n");
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue; // Skip empty lines and comments
+                }
+                
+                Matcher matcher = FRONT_MATTER_LINE_PATTERN.matcher(line);
+                if (matcher.find()) {
+                    String key = matcher.group(1).trim();
+                    String value = matcher.group(2).trim();
+                    
+                    // Remove surrounding quotes if present
+                    if ((value.startsWith("\"") && value.endsWith("\"")) || 
+                        (value.startsWith("'") && value.endsWith("'"))) {
+                        value = value.substring(1, value.length() - 1);
+                    }
+                    
+                    // Try to parse values appropriately
+                    Object parsedValue = value;
+                    if (value.equalsIgnoreCase("true")) {
+                        parsedValue = true;
+                    } else if (value.equalsIgnoreCase("false")) {
+                        parsedValue = false;
+                    } else if (value.equalsIgnoreCase("null") || value.isEmpty()) {
+                        parsedValue = null;
+                    } else if (value.matches("^-?\\d+$")) {
+                        try {
+                            parsedValue = Integer.parseInt(value);
+                        } catch (NumberFormatException e) {
+                            // Keep as string if parsing fails
+                        }
+                    } else if (value.matches("^-?\\d+\\.\\d+$")) {
+                        try {
+                            parsedValue = Double.parseDouble(value);
+                        } catch (NumberFormatException e) {
+                            // Keep as string if parsing fails
+                        }
+                    } else if (value.startsWith("[") && value.endsWith("]")) {
+                        // Simple array parsing
+                        String arrayContent = value.substring(1, value.length() - 1);
+                        parsedValue = Arrays.stream(arrayContent.split(","))
+                            .map(String::trim)
+                            .map(s -> s.replaceAll("^['\"]|['\"]$", ""))
+                            .filter(s -> !s.isEmpty())
+                            .collect(Collectors.toList());
+                    }
+                    
+                    metadata.setProperty(key, parsedValue);
+                }
             }
             
-            // Extract tags
-            Matcher tagsMatcher = TAGS_PATTERN.matcher(frontMatter);
-            if (tagsMatcher.find()) {
-                String[] tagArray = tagsMatcher.group(1).split(",");
-                for (String tag : tagArray) {
-                    String cleanedTag = tag.trim().replaceAll("['\"]", "");
-                    if (!cleanedTag.isEmpty()) {
-                        tags.add(cleanedTag);
-                    }
+            // Special handling for tags if it's a string
+            Object tags = metadata.getProperties().get("tags");
+            if (tags instanceof String) {
+                String tagsStr = ((String) tags).trim();
+                if (tagsStr.startsWith("[") && tagsStr.endsWith("]")) {
+                    tagsStr = tagsStr.substring(1, tagsStr.length() - 1);
                 }
+                List<String> tagList = Arrays.stream(tagsStr.split(","))
+                    .map(String::trim)
+                    .filter(tag -> !tag.isEmpty())
+                    .collect(Collectors.toList());
+                metadata.setProperty("tags", tagList);
             }
         }
         
@@ -69,13 +115,13 @@ public class MarkdownService {
         }
         
         // If no title found in front matter, use first heading
-        if (title.isEmpty() && !headings.isEmpty()) {
-            title = headings.get(0);
+        if ((metadata.getTitle() == null || metadata.getTitle().isEmpty()) && !headings.isEmpty()) {
+            metadata.setProperty("title", headings.get(0));
         }
         
         // Build the result
         result.put("markdown", content);
-        result.put("metadata", new ContentMetadataDto(title, tags));
+        result.put("metadata", metadata);
         result.put("headings", headings);
         
         return result;
