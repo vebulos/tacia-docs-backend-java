@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Arrays;
 
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
 public class ContentMetadataDto {
@@ -35,24 +37,30 @@ public class ContentMetadataDto {
         if (tags instanceof List<?> list) {
             return (List<String>) list;
         } else if (tags instanceof String str) {
-            return List.of(str.split("\\s*,\\s*"));
+            return Arrays.stream(str.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .toList();
         }
         return List.of();
     }
 
     @JsonIgnore
     public Integer getOrder() {
-        Object order = properties.get("order");
-        if (order instanceof Integer intValue) {
-            return intValue;
-        } else if (order instanceof String str) {
-            try {
-                return Integer.parseInt(str);
-            } catch (NumberFormatException e) {
-                return null;
-            }
-        }
-        return null;
+        return Optional.ofNullable(properties.get("order"))
+                .map(order -> {
+                    if (order instanceof Integer intValue) {
+                        return intValue;
+                    } else if (order instanceof String str) {
+                        try {
+                            return Integer.parseInt(str.trim());
+                        } catch (NumberFormatException e) {
+                            return null;
+                        }
+                    }
+                    return null;
+                })
+                .orElse(null);
     }
 
     public static ContentMetadataDto empty() {
