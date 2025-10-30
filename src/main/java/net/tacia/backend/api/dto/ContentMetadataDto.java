@@ -32,10 +32,10 @@ public class ContentMetadataDto {
     @SuppressWarnings("unchecked")
     public List<String> getTags() {
         Object tags = properties.get("tags");
-        if (tags instanceof List) {
-            return (List<String>) tags;
-        } else if (tags instanceof String) {
-            return List.of(((String) tags).split("\\s*,\\s*"));
+        if (tags instanceof List<?> list) {
+            return (List<String>) list;
+        } else if (tags instanceof String str) {
+            return List.of(str.split("\\s*,\\s*"));
         }
         return List.of();
     }
@@ -43,11 +43,11 @@ public class ContentMetadataDto {
     @JsonIgnore
     public Integer getOrder() {
         Object order = properties.get("order");
-        if (order instanceof Integer) {
-            return (Integer) order;
-        } else if (order instanceof String) {
+        if (order instanceof Integer intValue) {
+            return intValue;
+        } else if (order instanceof String str) {
             try {
-                return Integer.parseInt((String) order);
+                return Integer.parseInt(str);
             } catch (NumberFormatException e) {
                 return null;
             }

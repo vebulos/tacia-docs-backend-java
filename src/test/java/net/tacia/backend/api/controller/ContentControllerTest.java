@@ -100,11 +100,9 @@ class ContentControllerTest {
         }
         
         // Trim and normalize slashes
-        String normalized = path.trim()
+        return path.trim()
             .replaceAll("/+", "/")  // Replace multiple slashes with a single slash
-            .replaceAll("^/|/$", ""); // Remove leading and trailing slashes
-        
-        return normalized;
+            .replaceAll("^/|/$", "");
     }
     
     @Test
